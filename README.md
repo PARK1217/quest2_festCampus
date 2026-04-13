@@ -82,10 +82,10 @@
 - **의미:** `prometheus_fastapi_instrumentator`가 자동으로 수집하는 HTTP 요청률입니다. 메서드(GET/POST), 엔드포인트, 상태코드별로 분리됩니다.
 - **활용:** 어느 API 엔드포인트에 트래픽이 몰리는지 파악합니다.
 
-#### 5. FastAPI HTTP 요청 지연
+#### 5. FastAPI HTTP 요청 지연 (Avg)
 - **타입:** 시계열 그래프
-- **PromQL:** `histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, handler))`
-- **의미:** 엔드포인트별 HTTP 요청 처리 시간입니다.
+- **PromQL:** `rate(http_request_duration_seconds_sum[5m]) / rate(http_request_duration_seconds_count[5m])`
+- **의미:** 엔드포인트별 HTTP 요청의 평균 처리 시간입니다.
 - **활용:** 특정 API가 갑자기 느려지는 현상을 빠르게 탐지합니다.
 
 ### 메트릭 수집 구조
