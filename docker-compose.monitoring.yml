@@ -1,0 +1,49 @@
+services:
+  # Prometheus: Metrics storage
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    ports:
+      - "9090:9090"
+
+  # Loki: Logs storage
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+
+  # Tempo: Tracing storage
+  tempo:
+    image: grafana/tempo:latest
+    container_name: tempo
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      - ./tempo.yml:/etc/tempo.yaml
+    ports:
+      - "3200:3200"   # tempo
+      - "4317:4317"   # otlp grpc
+      - "4318:4318"   # otlp http
+
+  # Grafana: Visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    volumes:
+      - ./grafana_datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+      - ./grafana_dashboards_provisioning.yml:/etc/grafana/provisioning/dashboards/dashboards.yml
+      - ./grafana_dashboard.json:/etc/grafana/provisioning/dashboards/rag_dashboard.json
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    depends_on:
+      - prometheus
+      - loki
+      - tempo

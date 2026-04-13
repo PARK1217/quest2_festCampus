@@ -1,0 +1,59 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 1,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "모델별 호출 횟수 (Total Calls)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { 
+          "expr": "sum(rag_model_latency_seconds_count) by (provider)", 
+          "legendFormat": "{{provider}}",
+          "refId": "A" 
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "auto" },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "title": "모델별 평균 응답 시간 (Avg Latency)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { 
+          "expr": "avg(rate(rag_model_latency_seconds_sum[1m])) by (provider) / avg(rate(rag_model_latency_seconds_count[1m])) by (provider)", 
+          "legendFormat": "{{provider}}",
+          "refId": "A" 
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "auto" },
+          "unit": "s"
+        }
+      }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 36,
+  "style": "dark",
+  "tags": [],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "RAG Model Performance",
+  "uid": "rag_perf_01",
+  "version": 1,
+  "weekStart": ""
+}
