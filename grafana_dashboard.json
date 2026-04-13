@@ -1,39 +1,127 @@
 {
   "annotations": { "list": [] },
   "editable": true,
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
-  "id": 1,
+  "id": null,
   "links": [],
-  "liveNow": false,
   "panels": [
     {
-      "title": "모델별 호출 횟수 (Total Calls)",
+      "title": "모델별 호출 횟수 (calls/sec)",
       "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "targets": [
-        { 
-          "expr": "sum(rag_model_latency_seconds_count) by (provider)", 
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(rag_model_latency_seconds_count[5m])",
           "legendFormat": "{{provider}}",
-          "refId": "A" 
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "showPoints": "auto", "lineWidth": 2 },
+          "unit": "reqps",
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": { "tooltip": { "mode": "multi" } }
+    },
+    {
+      "title": "모델별 평균 응답 시간 (Avg Latency)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(rag_model_latency_seconds_sum[5m]) / rate(rag_model_latency_seconds_count[5m])",
+          "legendFormat": "{{provider}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "showPoints": "auto", "lineWidth": 2 },
+          "unit": "s",
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": { "tooltip": { "mode": "multi" } }
+    },
+    {
+      "title": "모델별 누적 호출 수",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rag_model_latency_seconds_count) by (provider)",
+          "legendFormat": "{{provider}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "horizontal", "textMode": "auto", "colorMode": "background" }
+    },
+    {
+      "title": "모델별 p95 응답 시간",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(rag_model_latency_seconds_bucket[5m])) by (le, provider))",
+          "legendFormat": "{{provider}} p95",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "auto", "lineWidth": 2 },
+          "unit": "s",
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "options": { "tooltip": { "mode": "multi" } }
+    },
+    {
+      "title": "FastAPI HTTP 요청 처리율 (calls/sec)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(http_requests_total[5m])",
+          "legendFormat": "{{method}} {{handler}} {{status_code}}",
+          "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "auto" },
-          "unit": "short"
+          "unit": "reqps"
         }
       }
     },
     {
-      "title": "모델별 평균 응답 시간 (Avg Latency)",
+      "title": "FastAPI HTTP 요청 지연 (p95)",
       "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
       "targets": [
-        { 
-          "expr": "avg(rate(rag_model_latency_seconds_sum[1m])) by (provider) / avg(rate(rag_model_latency_seconds_count[1m])) by (provider)", 
-          "legendFormat": "{{provider}}",
-          "refId": "A" 
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, handler))",
+          "legendFormat": "{{handler}} p95",
+          "refId": "A"
         }
       ],
       "fieldConfig": {
@@ -45,15 +133,15 @@
     }
   ],
   "refresh": "5s",
-  "schemaVersion": 36,
+  "schemaVersion": 38,
   "style": "dark",
-  "tags": [],
+  "tags": ["rag", "llm"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "timepicker": {},
-  "timezone": "",
+  "timezone": "browser",
   "title": "RAG Model Performance",
   "uid": "rag_perf_01",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

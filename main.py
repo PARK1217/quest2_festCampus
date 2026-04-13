@@ -379,18 +379,17 @@ async def chat(
         raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
 
     try:
-        start    = time.time()
-        result   = rag_engine.ask_chatbot(query, provider=provider, db=db)
-        
-        # 모델별 지연 시간 기록
-        latency_s = time.time() - start
-        MODEL_LATENCY.labels(provider=provider).observe(latency_s)
+        start  = time.time()
+        result = rag_engine.ask_chatbot(query, provider=provider, db=db)
 
-        # 만약 딕셔너리가 아닌 문자열로 에러가 반환된 경우 처리
+        # 에러 문자열 반환 처리 (observe 전에 체크)
         if isinstance(result, str):
             raise Exception(result)
 
-        latency  = int((time.time() - start) * 1000)
+        # 성공한 경우에만 지연 시간 기록
+        latency_s = time.time() - start
+        MODEL_LATENCY.labels(provider=provider).observe(latency_s)
+        latency   = int(latency_s * 1000)
 
         rag_q = RagQuery(
             user_id     = current_user.id,
