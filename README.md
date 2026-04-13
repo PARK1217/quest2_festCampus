@@ -37,6 +37,79 @@
 
 ---
 
+## 📊 Grafana 대시보드 구성 (RAG Model Performance)
+
+모니터링 스택 실행 후 `http://localhost:3001` 에서 **RAG Model Performance** 대시보드가 자동으로 프로비저닝됩니다.
+
+### 대시보드 레이아웃
+
+```
+┌──────────────────────────────┬──────────────────────────────┐
+│  모델별 호출 횟수 (calls/sec) │  모델별 평균 응답 시간 (Avg) │  ← 1행
+├──────────────────────────────┤                              │
+│  모델별 누적 호출 수 (숫자)   │                              │  ← 2행
+├──────────────────────────────┬──────────────────────────────┤
+│  FastAPI HTTP 요청 처리율    │  FastAPI HTTP 요청 지연      │  ← 3행
+└──────────────────────────────┴──────────────────────────────┘
+```
+
+### 패널별 설명
+
+#### 1. 모델별 호출 횟수 (calls/sec)
+- **타입:** 시계열 그래프
+- **PromQL:** `rate(rag_model_latency_seconds_count[5m])`
+- **의미:** 최근 5분 기준 초당 API 호출 수를 모델(provider)별로 보여줍니다.
+- **활용:** 어느 모델이 가장 많이 사용되고 있는지 트렌드 파악에 사용합니다.
+- **단위:** reqps (requests per second)
+
+#### 2. 모델별 평균 응답 시간 (Avg Latency)
+- **타입:** 시계열 그래프
+- **PromQL:** `rate(rag_model_latency_seconds_sum[5m]) / rate(rag_model_latency_seconds_count[5m])`
+- **의미:** 최근 5분 동안 각 모델이 응답하는 데 걸린 평균 시간입니다.
+- **활용:** OpenAI, Groq, Gemini 등 모델 간 속도를 직접 비교할 때 사용합니다.
+- **단위:** 초(s) — 예: 2.3s = 평균 2.3초 소요
+- **참고:** `sum / count` 형태의 표준 Histogram 패턴을 사용하며, 성공한 요청에 대해서만 기록됩니다.
+
+#### 3. 모델별 누적 호출 수
+- **타입:** Stat 패널 (숫자 카드)
+- **PromQL:** `sum(rag_model_latency_seconds_count) by (provider)`
+- **의미:** 서버 시작 이후 각 모델의 총 누적 호출 횟수입니다.
+- **활용:** 시계열이 아닌 절대값으로 모델 사용 비중을 파악합니다.
+
+#### 4. FastAPI HTTP 요청 처리율
+- **타입:** 시계열 그래프
+- **PromQL:** `rate(http_requests_total[5m])`
+- **의미:** `prometheus_fastapi_instrumentator`가 자동으로 수집하는 HTTP 요청률입니다. 메서드(GET/POST), 엔드포인트, 상태코드별로 분리됩니다.
+- **활용:** 어느 API 엔드포인트에 트래픽이 몰리는지 파악합니다.
+
+#### 5. FastAPI HTTP 요청 지연
+- **타입:** 시계열 그래프
+- **PromQL:** `histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, handler))`
+- **의미:** 엔드포인트별 HTTP 요청 처리 시간입니다.
+- **활용:** 특정 API가 갑자기 느려지는 현상을 빠르게 탐지합니다.
+
+### 메트릭 수집 구조
+
+```
+FastAPI 요청
+    │
+    ├─ prometheus_fastapi_instrumentator (자동)
+    │       http_requests_total            ← 패널 4 사용
+    │       http_request_duration_seconds  ← 패널 5 사용
+    │
+    └─ 커스텀 메트릭 (main.py에서 직접 기록)
+            rag_model_latency_seconds      ← 패널 1,2,3 사용
+              · label: provider (openai / groq / gemini 등)
+              · 성공 응답 시에만 기록
+```
+
+### 대시보드 설정
+- **자동 새로고침:** 5초
+- **기본 조회 범위:** 최근 1시간
+- **Provisioning 파일:** `grafana_dashboard.json`
+
+---
+
 ## 📋 기술 사양
 
 ### Backend
