@@ -44,6 +44,8 @@ class User(Base):
     email      = Column(String, unique=True, index=True, nullable=False)
     name       = Column(String, nullable=False)
     role       = Column(SAEnum(UserRole), default=UserRole.user, nullable=False)
+    is_deleted = Column(Boolean, default=False, nullable=False)  # 탈퇴 여부 (소프트 삭제)
+    deleted_at = Column(DateTime, nullable=True)                  # 탈퇴 일시
     created_at = Column(DateTime, default=get_kst_now)
 
     # relationships
@@ -63,6 +65,7 @@ class Document(Base):
     filename    = Column(String, nullable=False)
     file_path   = Column(String, nullable=False)
     file_type   = Column(String)                  # pdf / txt / etc.
+    is_deleted  = Column(Boolean, default=False, nullable=False)
     uploaded_at = Column(DateTime, default=get_kst_now)
 
     user           = relationship("User",          back_populates="documents")
@@ -95,14 +98,20 @@ class DocumentChunk(Base):
 class RagQuery(Base):
     __tablename__ = "rag_queries"
 
-    id          = Column(Integer, primary_key=True, index=True)
-    user_id     = Column(Integer, ForeignKey("users.id"), nullable=False)
-    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False)
-    query       = Column(Text, nullable=False)
-    response    = Column(Text)
-    model_used  = Column(String)                     # gpt-4o-mini 등
-    latency_ms  = Column(Integer)
-    queried_at  = Column(DateTime, default=get_kst_now)
+    id            = Column(Integer, primary_key=True, index=True)
+    user_id       = Column(Integer, ForeignKey("users.id"), nullable=False)
+    document_id   = Column(Integer, ForeignKey("documents.id"), nullable=False)
+    query         = Column(Text, nullable=False)
+    response     = Column(Text)
+    sources      = Column(JSON)                      # 참고한 출처 파일명 목록
+    document_ids = Column(JSON)                      # 선택된 전체 문서 ID 목록 (다중 선택 지원)
+    model_used   = Column(String)                    # gpt-4o-mini 등
+
+    latency_ms    = Column(Integer)
+    input_tokens  = Column(Integer)                  # 입력 토큰 수
+    output_tokens = Column(Integer)                  # 출력 토큰 수
+    status        = Column(String, default="success")  # success | rate_limit | not_found | bad_request | error
+    queried_at    = Column(DateTime, default=get_kst_now)
 
     user             = relationship("User",     back_populates="rag_queries")
     document         = relationship("Document", back_populates="rag_queries")

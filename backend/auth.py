@@ -14,6 +14,8 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = db.query(User).filter(User.email == user_data["email"]).first()
     if not user:
         raise HTTPException(status_code=401, detail="사용자를 찾을 수 없습니다.")
+    if user.is_deleted:
+        raise HTTPException(status_code=401, detail="탈퇴한 계정입니다.")
     return user
 
 
