@@ -4,10 +4,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import enum
 
 Base = declarative_base()
+
+def get_kst_now():
+    # KST(UTC+9) 시간대의 naive datetime 반환
+    return datetime.now(timezone(timedelta(hours=9))).replace(tzinfo=None)
 
 
 # ─────────────────────────────────────────────
@@ -40,7 +44,7 @@ class User(Base):
     email      = Column(String, unique=True, index=True, nullable=False)
     name       = Column(String, nullable=False)
     role       = Column(SAEnum(UserRole), default=UserRole.user, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=get_kst_now)
 
     # relationships
     documents      = relationship("Document",     back_populates="user")
@@ -59,7 +63,7 @@ class Document(Base):
     filename    = Column(String, nullable=False)
     file_path   = Column(String, nullable=False)
     file_type   = Column(String)                  # pdf / txt / etc.
-    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    uploaded_at = Column(DateTime, default=get_kst_now)
 
     user           = relationship("User",          back_populates="documents")
     chunks         = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
@@ -98,7 +102,7 @@ class RagQuery(Base):
     response    = Column(Text)
     model_used  = Column(String)                     # gpt-4o-mini 등
     latency_ms  = Column(Integer)
-    queried_at  = Column(DateTime, default=datetime.utcnow)
+    queried_at  = Column(DateTime, default=get_kst_now)
 
     user             = relationship("User",     back_populates="rag_queries")
     document         = relationship("Document", back_populates="rag_queries")
@@ -132,7 +136,7 @@ class RagEvaluation(Base):
     answer_relevancy   = Column(Float)   # 답변이 질문과 관련 있는가
     context_precision  = Column(Float)   # 검색된 청크가 정확한가
     context_recall     = Column(Float)   # 필요한 청크가 빠짐없이 검색됐는가
-    evaluated_at       = Column(DateTime, default=datetime.utcnow)
+    evaluated_at       = Column(DateTime, default=get_kst_now)
 
     query = relationship("RagQuery", back_populates="evaluation")
 
@@ -146,7 +150,7 @@ class RagGroundTruth(Base):
     created_by   = Column(Integer, ForeignKey("users.id"), nullable=False)
     question     = Column(Text, nullable=False)
     ideal_answer = Column(Text, nullable=False)
-    created_at   = Column(DateTime, default=datetime.utcnow)
+    created_at   = Column(DateTime, default=get_kst_now)
 
     document         = relationship("Document", back_populates="ground_truths")
     created_by_user  = relationship("User",     back_populates="ground_truths")
@@ -165,7 +169,7 @@ class QuizQuestion(Base):
     question       = Column(Text, nullable=False)
     choices        = Column(JSON)                    # 객관식 선택지
     correct_answer = Column(String, nullable=False)
-    created_at     = Column(DateTime, default=datetime.utcnow)
+    created_at     = Column(DateTime, default=get_kst_now)
 
     document = relationship("Document",      back_populates="quiz_questions")
     chunk    = relationship("DocumentChunk", back_populates="quiz_questions")
@@ -180,7 +184,7 @@ class QuizAttempt(Base):
     question_id  = Column(Integer, ForeignKey("quiz_questions.id"), nullable=False)
     user_answer  = Column(String)
     is_correct   = Column(Boolean)
-    attempted_at = Column(DateTime, default=datetime.utcnow)
+    attempted_at = Column(DateTime, default=get_kst_now)
 
     user     = relationship("User",         back_populates="quiz_attempts")
     question = relationship("QuizQuestion", back_populates="attempts")
@@ -197,7 +201,7 @@ class AgentSession(Base):
     user_id     = Column(Integer, ForeignKey("users.id"), nullable=False)
     goal        = Column(Text)
     status      = Column(SAEnum(AgentStatus), default=AgentStatus.running)
-    started_at  = Column(DateTime, default=datetime.utcnow)
+    started_at  = Column(DateTime, default=get_kst_now)
     finished_at = Column(DateTime, nullable=True)
 
     user  = relationship("User",       back_populates="agent_sessions")
@@ -214,7 +218,7 @@ class AgentStep(Base):
     tool_name  = Column(String, nullable=True)        # search_doc, generate_quiz 등
     input      = Column(JSON)
     output     = Column(JSON)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=get_kst_now)
 
     session = relationship("AgentSession", back_populates="steps")
 
@@ -229,8 +233,8 @@ class StudySession(Base):
     id               = Column(Integer, primary_key=True, index=True)
     user_id          = Column(Integer, ForeignKey("users.id"), nullable=False)
     document_id      = Column(Integer, ForeignKey("documents.id"), nullable=False)
-    started_at       = Column(DateTime, default=datetime.utcnow)
-    last_accessed_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    started_at       = Column(DateTime, default=get_kst_now)
+    last_accessed_at = Column(DateTime, default=get_kst_now, onupdate=get_kst_now)
 
     user     = relationship("User",     back_populates="study_sessions")
     document = relationship("Document", back_populates="study_sessions")

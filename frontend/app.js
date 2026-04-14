@@ -266,8 +266,7 @@ const Upload = {
 
     const formatDate = (iso) => {
       if (!iso) return '-';
-      // 백엔드에서 온 시간(UTC)을 브라우저가 현지 시간(KST)으로 인식하도록 'Z' 추가
-      const date = iso.endsWith('Z') ? new Date(iso) : new Date(iso + 'Z');
+      const date = new Date(iso);
       return date.toLocaleString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
     };
 
