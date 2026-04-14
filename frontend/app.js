@@ -310,7 +310,14 @@ const Upload = {
               <td class="py-3 flex gap-2">
                 <button @click="goToChat([doc.id])" class="text-xs bg-green-100 text-green-700 px-3 py-1 rounded-lg hover:bg-green-200 transition-colors font-medium">채팅</button>
                 <button @click="goToQuestions([doc.id])" class="text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded-lg hover:bg-purple-200 transition-colors font-medium">문제 생성</button>
-                <button @click="deleteDocument(doc.id, doc.filename)" class="text-xs bg-red-100 text-red-600 px-3 py-1 rounded-lg hover:bg-red-200 transition-colors font-medium">삭제</button>
+                <button
+                  @click="deleteDocument(doc.id, doc.filename)"
+                  :disabled="deletingId === doc.id"
+                  class="text-xs bg-red-100 text-red-600 px-3 py-1 rounded-lg hover:bg-red-200 transition-colors font-medium flex items-center gap-1"
+                >
+                  <span v-if="deletingId === doc.id" class="animate-spin inline-block w-3 h-3 border-2 border-red-600 border-t-transparent rounded-full"></span>
+                  {{ deletingId === doc.id ? '삭제 중...' : '삭제' }}
+                </button>
               </td>
             </tr>
           </tbody>
@@ -346,6 +353,7 @@ const Upload = {
     const messageOk    = ref(true);
     const currentPage  = ref(1);
     const pageSize     = 20;
+    const deletingId   = ref(null);
 
     const totalPages    = Vue.computed(() => Math.max(1, Math.ceil(documents.value.length / pageSize)));
     const pagedDocuments = Vue.computed(() => {
@@ -554,9 +562,12 @@ const Chat = {
               :class="msg.role === 'user'
                 ? 'bg-blue-600 text-white rounded-2xl rounded-tr-sm px-4 py-3 max-w-lg shadow'
                 : 'bg-white text-gray-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-lg shadow border border-gray-100'"
-              class="text-sm leading-relaxed whitespace-pre-wrap"
+              class="text-sm leading-relaxed"
             >
-              {{ msg.content }}
+              <!-- 메시지 내용 -->
+              <div v-if="msg.role === 'user'" class="whitespace-pre-wrap">{{ msg.content }}</div>
+              <div v-else v-html="renderMarkdown(msg.content)" class="markdown-body"></div>
+
               <!-- AI 답변일 경우 모델 및 출처 표시 -->
               <div v-if="msg.role === 'assistant'" class="mt-2 pt-2 border-t border-gray-100 flex flex-col gap-1 text-[10px] text-gray-400">
                 <div v-if="msg.model" class="flex items-center gap-1">

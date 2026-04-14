@@ -45,8 +45,10 @@ class User(Base):
     name       = Column(String, nullable=False)
     role       = Column(SAEnum(UserRole), default=UserRole.user, nullable=False)
     is_deleted = Column(Boolean, default=False, nullable=False)  # 탈퇴 여부 (소프트 삭제)
-    deleted_at = Column(DateTime, nullable=True)                  # 탈퇴 일시
-    created_at = Column(DateTime, default=get_kst_now)
+    deleted_at    = Column(DateTime, nullable=True)                  # 탈퇴 일시
+    last_login_at = Column(DateTime, nullable=True)                  # 최근 로그인 일시
+    created_at    = Column(DateTime, default=get_kst_now)
+
 
     # relationships
     documents      = relationship("Document",     back_populates="user")

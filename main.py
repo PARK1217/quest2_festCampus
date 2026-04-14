@@ -154,7 +154,7 @@ class RAGEngine:
             return ChatGoogleGenerativeAI(
                 model="gemini-2.0-flash",
                 google_api_key=GOOGLE_API_KEY,
-                temperature=0,
+                temperature=0.1,
                 safety_settings={
                     "HARM_CATEGORY_HARASSMENT":       "BLOCK_NONE",
                     "HARM_CATEGORY_HATE_SPEECH":       "BLOCK_NONE",
@@ -164,20 +164,20 @@ class RAGEngine:
             )
 
         if provider == "groq" and GROQ_API_KEY:
-            return ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=GROQ_API_KEY)
+            return ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=GROQ_API_KEY, temperature=0.1)
 
         if provider == "huggingface" and HUGGINGFACE_API_KEY and GROQ_API_KEY:
-            return ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=GROQ_API_KEY)
+            return ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=GROQ_API_KEY, temperature=0.1)
 
         # ── Groq 추가 모델 (기존 키 재사용) ────
         if provider == "groq-70b" and GROQ_API_KEY:
-            return ChatGroq(model_name="llama-3.3-70b-versatile", groq_api_key=GROQ_API_KEY)
+            return ChatGroq(model_name="llama-3.3-70b-versatile", groq_api_key=GROQ_API_KEY, temperature=0.1)
 
         if provider == "groq-mixtral" and GROQ_API_KEY:
-            return ChatGroq(model_name="moonshotai/kimi-k2-instruct", groq_api_key=GROQ_API_KEY)
+            return ChatGroq(model_name="moonshotai/kimi-k2-instruct", groq_api_key=GROQ_API_KEY, temperature=0.1)
 
         if provider == "groq-gemma" and GROQ_API_KEY:
-            return ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=GROQ_API_KEY)
+            return ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=GROQ_API_KEY, temperature=0.1)
 
         # ── 신규 무료 외부 모델 ─────────────────
         if provider == "mistral" and MISTRAL_API_KEY:
@@ -219,10 +219,23 @@ class RAGEngine:
         return None
 
     def process_document(self, file_path: str, user_id: int, document_id: int = None, db: Session = None):
-        loader   = PyPDFLoader(file_path) if file_path.endswith(".pdf") else TextLoader(file_path)
-        docs     = loader.load()
+        if file_path.endswith(".pdf"):
+            # PDF 로더 강화 (손상된 객체 무시 시도)
+            loader = PyPDFLoader(file_path)
+        else:
+            try:
+                loader = TextLoader(file_path, encoding="utf-8")
+                docs = loader.load()
+            except:
+                loader = TextLoader(file_path, encoding="cp949")
         
-        # 메타데이터에 소유자 정보 주입 (보안 격리용)
+        try:
+            docs = loader.load()
+        except Exception as e:
+            logger.error(f"파일 로드 실패 ({file_path}): {e}")
+            return
+
+        # 메타데이터에 정보 주입 (보안 및 필터용)
         for d in docs:
             d.metadata["user_id"] = user_id
             if document_id:
@@ -314,30 +327,42 @@ class RAGEngine:
                 self.reset_and_rebuild_index(db)
 
         if not self.vector_store:
+            logger.warning(f"벡터 DB가 비어있어 문제를 생성할 수 없습니다. (User: {user_id})")
             return "[]"
 
         llm = self._get_llm(provider)
-        if not llm:
+        if not llm: return "[]"
+
+        # 필터링 로직 강화 및 안정화
+        filter_dict = {"user_id": user_id}
+        if document_ids and len(document_ids) == 1:
+            # 단일 문서인 경우 direct match 필터
+            filter_dict["document_id"] = document_ids[0]
+            retrieved = self.vector_store.similarity_search("문서 핵심 요약 및 주요 개념", k=10, filter=filter_dict)
+        else:
+            # 다중 문서이거나 필터가 복잡한 경우 람다 필터 사용
+            doc_ids_set = set(document_ids) if document_ids else None
+            def _complex_filter(meta):
+                if meta.get("user_id") != user_id: return False
+                if doc_ids_set: return meta.get("document_id") in doc_ids_set
+                return True
+            retrieved = self.vector_store.similarity_search("문서 핵심 요약 및 주요 개념", k=10, filter=_complex_filter)
+
+        context = "\n".join(d.page_content for d in retrieved)
+        logger.info(f"문제 생성용 컨텍스트 확보: {len(context)}자 (Docs: {document_ids})")
+        
+        if not context.strip():
+            logger.error("검색된 컨텍스트가 없습니다. 필터 조건을 확인하세요.")
             return "[]"
 
-        doc_ids_set = set(document_ids) if document_ids else None
-        def _filter(meta):
-            if meta.get("user_id") != user_id:
-                return False
-            if doc_ids_set:
-                return meta.get("document_id") in doc_ids_set
-            return True
-
-        retriever = self.vector_store.as_retriever(
-            search_kwargs={"k": 5, "filter": _filter}
-        )
-        docs      = retriever.invoke("주요 개념과 핵심 내용")
-        context   = "\n".join(d.page_content for d in docs)
-        prompt    = (
-            "다음 컨텍스트를 바탕으로 학습용 객관식 문제 5개를 생성해주세요.\n"
-            "반드시 오직 JSON 배열 형식으로만 출력하세요. 다른 말(인사말 등)이나 코드 블록 기호(```json)는 절대 사용하지 마세요.\n"
-            "각 항목은 'question'(문자열), 'options'(4개 선택지 문자열 배열), 'answer'(정답 선택지 문자열) 키를 가져야 합니다.\n\n"
-            f"컨텍스트:\n{context}"
+        prompt = (
+            "당신은 시험 출제 위원입니다. 아래 [문서 내용]을 바탕으로 객관식 문제 5개를 만드세요.\n"
+            "### 규칙 ###\n"
+            "1. 반드시 아래 [문서 내용]에 명시된 정보만을 근거로 하되, 자연스러운 문장을 위해 당신의 지식을 보태도 좋습니다.\n"
+            "2. 절대 엉뚱한 분야의 문제는 내지 마세요.\n"
+            "3. 반드시 한국어로만 작성하세요.\n"
+            "4. 출력 형식은 오직 하나의 JSON 배열이어야 합니다.\n\n"
+            f"[문서 내용]\n{context}"
         )
         return llm.invoke(prompt).content
 
@@ -358,7 +383,7 @@ class QuizAttemptRequest(BaseModel):
 @app.get("/login")
 async def login(request: Request):
     redirect_uri = request.url_for("auth")
-    return await oauth.google.authorize_redirect(request, redirect_uri)
+    return await oauth.google.authorize_redirect(request, redirect_uri, prompt="select_account")
 
 
 @app.get("/auth")
@@ -375,6 +400,10 @@ async def auth(request: Request, db: Session = Depends(get_db)):
         db.add(user)
         db.commit()
         db.refresh(user)
+
+    # 최근 로그인 일시 기록
+    user.last_login_at = get_kst_now()
+    db.commit()
 
     request.session["user"] = {"email": user.email, "name": user.name, "role": user.role}
     return RedirectResponse(url="/")
@@ -556,7 +585,10 @@ async def get_documents(
 ):
     docs = (
         db.query(Document)
-        .filter(Document.user_id == current_user.id, Document.is_deleted.isnot(True))
+        .filter(
+            Document.user_id == current_user.id,
+            Document.is_deleted.isnot(True)  # 삭제되지 않은 문서만 조회
+        )
         .order_by(Document.uploaded_at.desc())
         .all()
     )
@@ -808,11 +840,19 @@ async def generate_questions(
 
     saved = []
     for q in questions_data:
-        # 데이터 구조 보정
-        question_text = q.get("question", "")
-        choices = q.get("options") or q.get("choices") or []
-        answer = q.get("answer", "")
-        
+        # 데이터 구조 보정 — dict 형태와 list 형태 모두 처리
+        if isinstance(q, dict):
+            question_text = q.get("question", "")
+            choices       = q.get("options") or q.get("choices") or []
+            answer        = q.get("answer", "")
+        elif isinstance(q, list) and len(q) >= 3:
+            # ["질문", ["A","B","C","D"], "정답"] 형태 대응
+            question_text = q[0] if isinstance(q[0], str) else ""
+            choices       = q[1] if isinstance(q[1], list) else []
+            answer        = q[2] if isinstance(q[2], str) else ""
+        else:
+            continue
+
         if not question_text or not choices: continue
 
         qq = QuizQuestion(
