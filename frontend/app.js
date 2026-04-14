@@ -99,34 +99,25 @@ const Dashboard = {
         </div>
       </div>
 
-      <!-- 틀린 문제 복습하기 -->
+      <!-- 틀린 문제 복습하기 요약 카드 -->
       <div v-if="data.wrong_answers.length > 0" class="bg-white rounded-xl shadow p-6">
-        <h2 class="text-lg font-bold mb-1">틀린 문제 복습하기</h2>
-        <p class="text-sm text-gray-400 mb-5">최근 틀린 문제 {{ data.wrong_answers.length }}개를 복습해보세요.</p>
-        <div class="space-y-5">
-          <div v-for="(w, i) in data.wrong_answers" :key="i" class="border border-red-100 rounded-xl p-4 bg-red-50/20">
-            <p class="font-semibold text-gray-800 mb-3 pr-4">
-              <span class="text-red-500 mr-2">Q{{ i + 1 }}.</span>{{ w.question }}
-            </p>
-            <div class="space-y-2">
-              <div
-                v-for="choice in w.choices" :key="choice"
-                class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm border"
-                :class="choice === w.correct_answer
-                  ? 'border-green-400 bg-green-50 text-green-700 font-semibold'
-                  : (choice === w.user_answer
-                    ? 'border-red-400 bg-red-50 text-red-600'
-                    : 'border-gray-200 text-gray-600')"
-              >
-                <span v-if="choice === w.correct_answer" class="text-green-500 flex-shrink-0">✓</span>
-                <span v-else-if="choice === w.user_answer" class="text-red-400 flex-shrink-0">✗</span>
-                <span v-else class="w-3 inline-block flex-shrink-0"></span>
-                <span class="flex-1">{{ choice }}</span>
-                <span v-if="choice === w.correct_answer" class="ml-auto text-xs font-bold text-green-600">정답</span>
-                <span v-else-if="choice === w.user_answer" class="ml-auto text-xs text-red-500">내 답</span>
-              </div>
-            </div>
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h2 class="text-lg font-bold">오답 복습</h2>
+            <p class="text-sm text-gray-400 mt-0.5">틀린 문제 <span class="text-red-500 font-semibold">{{ data.wrong_answers.length }}개</span>가 대기 중입니다.</p>
           </div>
+          <router-link to="/review"
+            class="bg-red-500 text-white px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-red-600 transition-colors flex items-center gap-2 shadow-sm">
+            복습 시작 →
+          </router-link>
+        </div>
+        <div class="space-y-1.5">
+          <div v-for="(w, i) in data.wrong_answers.slice(0, 4)" :key="i"
+            class="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-100 text-sm text-gray-700">
+            <span class="text-red-400 font-bold flex-shrink-0">Q{{ i + 1 }}.</span>
+            <span class="truncate">{{ w.question }}</span>
+          </div>
+          <p v-if="data.wrong_answers.length > 4" class="text-xs text-gray-400 text-right pt-1">+ {{ data.wrong_answers.length - 4 }}개 더...</p>
         </div>
       </div>
       </template>
@@ -1520,6 +1511,196 @@ const QueryLogs = {
   }
 };
 
+// ─── WrongAnswersReview ───────────────────────
+const WrongAnswersReview = {
+  template: `
+    <div class="p-8 max-w-3xl mx-auto">
+
+      <!-- 헤더 -->
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-3xl font-bold">오답 복습</h1>
+          <p v-if="!loading" class="text-sm text-gray-400 mt-1">
+            <span v-if="questions.length > 0">틀린 문제 <span class="text-red-500 font-semibold">{{ questions.length }}개</span>를 다시 풀어보세요.</span>
+            <span v-else>틀린 문제가 없습니다.</span>
+          </p>
+        </div>
+        <router-link to="/" class="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">← 대시보드</router-link>
+      </div>
+
+      <!-- 로딩 -->
+      <div v-if="loading" class="flex items-center justify-center h-60 gap-3 text-gray-400">
+        <span class="animate-spin inline-block w-6 h-6 border-2 border-red-400 border-t-transparent rounded-full"></span>
+        <span>불러오는 중...</span>
+      </div>
+
+      <!-- 틀린 문제 없음 -->
+      <div v-else-if="questions.length === 0" class="bg-white rounded-2xl shadow p-12 text-center">
+        <div class="text-6xl mb-4">🎉</div>
+        <p class="text-xl font-bold text-gray-700 mb-2">모든 문제를 맞혔습니다!</p>
+        <p class="text-gray-400 mb-6">아직 틀린 문제가 없거나 모두 복습 완료했습니다.</p>
+        <router-link to="/questions" class="inline-block bg-purple-600 text-white px-6 py-2.5 rounded-xl font-semibold hover:bg-purple-700 transition-colors">문제은행으로</router-link>
+      </div>
+
+      <template v-else>
+        <!-- 점수 배너 (채점 후) -->
+        <div v-if="submitted" class="mb-6 p-5 rounded-2xl text-center font-bold text-lg shadow-sm"
+          :class="score.correct === score.total ? 'bg-green-100 text-green-700 border border-green-200'
+                : score.correct / score.total >= 0.6 ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                : 'bg-orange-100 text-orange-700 border border-orange-200'">
+          <div class="text-3xl font-black mb-1">{{ Math.round(score.correct / score.total * 100) }}%</div>
+          <div class="text-base font-semibold">{{ score.total }}문제 중 {{ score.correct }}문제 정답</div>
+          <div class="mt-3 flex justify-center gap-3">
+            <button v-if="stillWrongCount > 0" @click="retryWrong"
+              class="text-sm px-4 py-2 rounded-lg bg-red-500 text-white hover:bg-red-600 font-semibold transition-colors">
+              틀린 {{ stillWrongCount }}문제 다시 풀기
+            </button>
+            <router-link to="/" class="text-sm px-4 py-2 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium transition-colors">
+              대시보드로
+            </router-link>
+          </div>
+        </div>
+
+        <!-- 진행상황 바 (채점 전) -->
+        <div v-if="!submitted" class="bg-white rounded-xl shadow px-5 py-4 mb-6 flex items-center gap-4">
+          <span class="text-sm text-gray-500 flex-shrink-0">{{ answeredCount }} / {{ questions.length }} 답변</span>
+          <div class="flex-1 bg-gray-100 rounded-full h-2">
+            <div class="bg-red-400 h-2 rounded-full transition-all duration-300"
+              :style="{ width: (answeredCount / questions.length * 100) + '%' }"></div>
+          </div>
+          <span class="text-sm font-semibold text-red-500 flex-shrink-0">{{ Math.round(answeredCount / questions.length * 100) }}%</span>
+        </div>
+
+        <!-- 문제 카드 -->
+        <div class="space-y-6">
+          <div v-for="(q, qi) in questions" :key="q.id"
+            class="bg-white rounded-2xl shadow p-6 transition-all"
+            :class="submitted ? (results[q.id]?.is_correct ? 'border-l-4 border-green-400' : 'border-l-4 border-red-400') : 'border-l-4 border-gray-200'">
+
+            <!-- 문제 번호 + 채점 뱃지 -->
+            <div class="flex items-start justify-between mb-4">
+              <p class="font-semibold text-gray-800 flex-1 pr-4">
+                <span class="text-red-500 font-bold mr-2">Q{{ qi + 1 }}.</span>{{ q.question }}
+              </p>
+              <span v-if="submitted" class="flex-shrink-0 text-xs font-bold px-2.5 py-1 rounded-full"
+                :class="results[q.id]?.is_correct ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
+                {{ results[q.id]?.is_correct ? '✓ 정답' : '✗ 오답' }}
+              </span>
+            </div>
+
+            <!-- 선택지 -->
+            <div class="space-y-2">
+              <label v-for="choice in q.choices" :key="choice"
+                class="flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all"
+                :class="choiceClass(q.id, choice)">
+                <input type="radio"
+                  :name="'rq' + q.id"
+                  :value="choice"
+                  v-model="userAnswers[q.id]"
+                  :disabled="submitted"
+                  class="accent-red-500 w-4 h-4 flex-shrink-0">
+                <span class="text-sm flex-1">{{ choice }}</span>
+                <span v-if="submitted && choice === results[q.id]?.correct_answer"
+                  class="text-green-600 text-xs font-bold flex-shrink-0">정답</span>
+                <span v-else-if="submitted && choice === userAnswers[q.id] && !results[q.id]?.is_correct"
+                  class="text-red-500 text-xs flex-shrink-0">내 답</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 채점 버튼 -->
+        <div v-if="!submitted" class="flex justify-center mt-8">
+          <button
+            @click="submitAnswers"
+            :disabled="submitting || answeredCount < questions.length"
+            class="bg-red-500 text-white px-12 py-3.5 rounded-2xl font-bold text-lg hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-3 shadow-md">
+            <span v-if="submitting" class="animate-spin inline-block w-5 h-5 border-2 border-white border-t-transparent rounded-full"></span>
+            {{ submitting ? '채점 중...' : answeredCount < questions.length ? '모든 문제에 답해주세요 (' + answeredCount + '/' + questions.length + ')' : '채점하기' }}
+          </button>
+        </div>
+      </template>
+    </div>
+  `,
+  setup() {
+    const questions   = ref([]);
+    const userAnswers = ref({});
+    const results     = ref({});
+    const submitted   = ref(false);
+    const submitting  = ref(false);
+    const loading     = ref(true);
+    const score       = ref({ correct: 0, total: 0 });
+
+    const answeredCount  = Vue.computed(() => Object.keys(userAnswers.value).length);
+    const stillWrongCount = Vue.computed(() =>
+      Object.values(results.value).filter(r => !r.is_correct).length
+    );
+
+    const fetchWrongQuestions = async () => {
+      loading.value = true;
+      try {
+        const res = await axios.get(`${API_URL}/api/questions`);
+        questions.value = res.data.filter(q => q.status === 'wrong');
+      } catch (e) { console.error(e); }
+      finally { loading.value = false; }
+    };
+
+    const submitAnswers = async () => {
+      if (submitting.value) return;
+      submitting.value = true;
+      const resultMap = {};
+      let correct = 0;
+      for (const q of questions.value) {
+        const answer = userAnswers.value[q.id] ?? '';
+        try {
+          const res = await axios.post(`${API_URL}/api/questions/attempt`, {
+            question_id: q.id, user_answer: answer,
+          });
+          resultMap[q.id] = res.data;
+          if (res.data.is_correct) correct++;
+        } catch (e) {
+          resultMap[q.id] = { is_correct: false, correct_answer: '' };
+        }
+      }
+      results.value   = resultMap;
+      score.value     = { correct, total: questions.value.length };
+      submitted.value = true;
+      submitting.value = false;
+    };
+
+    const retryWrong = () => {
+      // 틀린 문제만 남기고 초기화
+      const wrongIds = new Set(
+        Object.entries(results.value).filter(([, r]) => !r.is_correct).map(([id]) => parseInt(id))
+      );
+      questions.value  = questions.value.filter(q => wrongIds.has(q.id));
+      userAnswers.value = {};
+      results.value    = {};
+      submitted.value  = false;
+      score.value      = { correct: 0, total: 0 };
+    };
+
+    const choiceClass = (qId, choice) => {
+      if (!submitted.value) {
+        return userAnswers.value[qId] === choice
+          ? 'border-red-400 bg-red-50'
+          : 'border-gray-200 hover:border-red-300 hover:bg-red-50/50';
+      }
+      const r = results.value[qId];
+      if (!r) return 'border-gray-200';
+      if (choice === r.correct_answer)                               return 'border-green-400 bg-green-50';
+      if (choice === userAnswers.value[qId] && !r.is_correct) return 'border-red-400 bg-red-50/70';
+      return 'border-gray-100 opacity-60';
+    };
+
+    onMounted(fetchWrongQuestions);
+    return {
+      questions, userAnswers, results, submitted, submitting, loading, score,
+      answeredCount, stillWrongCount, submitAnswers, retryWrong, choiceClass,
+    };
+  }
+};
+
 // ─── AdminUsers ──────────────────────────────
 const AdminUsers = {
   template: `
@@ -1736,6 +1917,9 @@ const App = {
           <router-link to="/questions" class="p-3 rounded-lg hover:bg-gray-800 transition-colors flex items-center gap-3" active-class="bg-blue-600 hover:bg-blue-600">
             <span>문제은행</span>
           </router-link>
+          <router-link to="/review" class="p-3 rounded-lg hover:bg-gray-800 transition-colors flex items-center gap-3" active-class="bg-red-500 hover:bg-red-500">
+            <span>오답 복습</span>
+          </router-link>
           <template v-if="user.role === 'admin'">
             <div class="mt-4 border-t border-gray-700 pt-4 flex flex-col gap-2">
               <router-link to="/admin"
@@ -1837,6 +2021,7 @@ const routes = [
   { path: '/upload',      component: Upload },
   { path: '/chat',        component: Chat },
   { path: '/questions',   component: Questions },
+  { path: '/review',      component: WrongAnswersReview },
   { path: '/admin',       component: AdminDashboard },
   { path: '/admin/logs',  component: QueryLogs },
   { path: '/admin/users', component: AdminUsers },
