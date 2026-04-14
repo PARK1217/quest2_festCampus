@@ -125,16 +125,28 @@ class RAGEngine:
             return ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=OPENAI_API_KEY)
         return None
 
-    def process_document(self, file_path: str):
+    def process_document(self, file_path: str, document_id: int = None, db: Session = None):
         loader   = PyPDFLoader(file_path) if file_path.endswith(".pdf") else TextLoader(file_path)
         docs     = loader.load()
         splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
         splits   = splitter.split_documents(docs)
-        
+
         if self.vector_store is None:
             self.vector_store = FAISS.from_documents(splits, self.embeddings)
         else:
             self.vector_store.add_documents(splits)
+
+        # document_id와 db가 있을 때만 청크를 DB에 저장 (업로드 시에만)
+        if document_id and db:
+            for i, split in enumerate(splits):
+                chunk = DocumentChunk(
+                    document_id = document_id,
+                    chunk_index = i,
+                    content     = split.page_content,
+                    token_count = len(split.page_content.split()),
+                )
+                db.add(chunk)
+            db.commit()
 
     def reset_and_rebuild_index(self, db: Session):
         """데이터베이스의 모든 문서를 기반으로 벡터 인덱스를 재구축합니다."""
@@ -330,7 +342,7 @@ async def upload(
     db.add(doc)
     db.commit()
 
-    rag_engine.process_document(path)
+    rag_engine.process_document(path, document_id=doc.id, db=db)
     return {"message": "업로드 성공 (통합 벡터 DB 구축)", "document_id": doc.id}
 
 
@@ -351,7 +363,8 @@ async def delete_document(
     if os.path.exists(doc.file_path):
         os.remove(doc.file_path)
 
-    # DB 삭제 (cascade 설정으로 하위 항목도 자동 삭제됨)
+    # 청크 먼저 삭제 (FK 제약으로 인해 document 삭제 전에 처리)
+    db.query(DocumentChunk).filter(DocumentChunk.document_id == document_id).delete()
     db.delete(doc)
     db.commit()
 
