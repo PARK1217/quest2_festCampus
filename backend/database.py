@@ -41,6 +41,24 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # 기존 테이블에 누락된 컬럼 추가 (멱등 마이그레이션)
+    _migrate()
+
+
+def _migrate():
+    migrations = [
+        "ALTER TABLE rag_queries ADD COLUMN IF NOT EXISTS input_tokens  INTEGER",
+        "ALTER TABLE rag_queries ADD COLUMN IF NOT EXISTS output_tokens INTEGER",
+        "ALTER TABLE rag_queries ADD COLUMN IF NOT EXISTS status        VARCHAR DEFAULT 'success'",
+        "ALTER TABLE rag_queries ADD COLUMN IF NOT EXISTS sources       JSONB",
+        "ALTER TABLE rag_queries ADD COLUMN IF NOT EXISTS document_ids  JSONB",
+        "ALTER TABLE documents   ADD COLUMN IF NOT EXISTS is_deleted    BOOLEAN DEFAULT FALSE NOT NULL",
+        "ALTER TABLE users       ADD COLUMN IF NOT EXISTS is_deleted    BOOLEAN DEFAULT FALSE NOT NULL",
+        "ALTER TABLE users       ADD COLUMN IF NOT EXISTS deleted_at    TIMESTAMP",
+    ]
+    with engine.begin() as conn:
+        for sql in migrations:
+            conn.execute(text(sql))
 
 
 def get_db():
