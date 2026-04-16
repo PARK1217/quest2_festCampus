@@ -51,6 +51,28 @@ const Dashboard = {
         </div>
       </div>
 
+      <!-- 추가 통계 카드 (학습 문서 수, 오답 수) -->
+      <div class="grid grid-cols-2 gap-6 mb-8">
+        <div class="bg-white p-5 rounded-lg shadow-md border-t-4 border-teal-500 flex items-center gap-4">
+          <div class="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500 font-medium">학습한 문서</p>
+            <p class="text-2xl font-bold text-teal-600">{{ data.stats.total_study_docs || 0 }}개</p>
+          </div>
+        </div>
+        <div class="bg-white p-5 rounded-lg shadow-md border-t-4 border-red-400 flex items-center gap-4">
+          <div class="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+          </div>
+          <div>
+            <p class="text-xs text-gray-500 font-medium">오답 대기</p>
+            <p class="text-2xl font-bold text-red-500">{{ data.wrong_answers.length }}개</p>
+          </div>
+        </div>
+      </div>
+
       <!-- 빈 상태 배너 -->
       <div v-if="data.stats.total_docs === 0" class="mb-8 bg-blue-50 border border-blue-200 rounded-xl p-6 text-center">
         <p class="text-blue-700 font-semibold mb-3">아직 업로드된 문서가 없습니다.</p>
@@ -99,6 +121,29 @@ const Dashboard = {
         </div>
       </div>
 
+      <!-- 최근 학습 문서 -->
+      <div v-if="data.study_sessions && data.study_sessions.length > 0" class="bg-white rounded-xl shadow p-6 mb-6">
+        <h2 class="text-lg font-bold mb-4">최근 학습 문서</h2>
+        <div class="divide-y divide-gray-100">
+          <div v-for="s in data.study_sessions" :key="s.document_id"
+            class="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+            <div class="flex items-center gap-3">
+              <div class="w-8 h-8 rounded-lg bg-teal-100 flex items-center justify-center flex-shrink-0">
+                <svg class="w-4 h-4 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+              </div>
+              <span class="text-sm font-medium text-gray-700 truncate max-w-xs">{{ s.filename }}</span>
+            </div>
+            <div class="flex items-center gap-3 flex-shrink-0">
+              <span class="text-xs text-gray-400">{{ s.last_accessed_at }}</span>
+              <router-link :to="'/chat?document_id=' + s.document_id"
+                class="text-xs px-3 py-1 rounded-lg bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200 font-medium transition-colors">
+                계속 학습
+              </router-link>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 틀린 문제 복습하기 요약 카드 -->
       <div v-if="data.wrong_answers.length > 0" class="bg-white rounded-xl shadow p-6">
         <div class="flex items-center justify-between mb-4">
@@ -125,10 +170,11 @@ const Dashboard = {
   `,
   setup() {
     const data = ref({
-      stats: { correct_rate: 0, progress: 0, total_docs: 0, total_queries: 0, total_attempts: 0, correct_count: 0 },
+      stats: { correct_rate: 0, progress: 0, total_docs: 0, total_queries: 0, total_attempts: 0, correct_count: 0, total_study_docs: 0 },
       model_usage: [],
       recent_queries: [],
       wrong_answers: [],
+      study_sessions: [],
     });
     const expandedQuery = ref(null);
 
@@ -291,6 +337,7 @@ const Upload = {
               </th>
               <th class="pb-2 font-medium">파일명</th>
               <th class="pb-2 font-medium">형식</th>
+              <th class="pb-2 font-medium text-center">청크 수</th>
               <th class="pb-2 font-medium">업로드 일시</th>
               <th class="pb-2 font-medium">개별 바로가기</th>
             </tr>
@@ -305,6 +352,12 @@ const Upload = {
               <td class="py-3 text-gray-800 font-medium max-w-xs truncate">{{ doc.filename }}</td>
               <td class="py-3">
                 <span class="bg-blue-100 text-blue-700 text-xs font-semibold px-2 py-0.5 rounded uppercase">{{ doc.file_type }}</span>
+              </td>
+              <td class="py-3 text-center">
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full"
+                  :class="doc.chunk_count > 0 ? 'bg-teal-100 text-teal-700' : 'bg-gray-100 text-gray-400'">
+                  {{ doc.chunk_count || 0 }}
+                </span>
               </td>
               <td class="py-3 text-gray-500">{{ formatDate(doc.uploaded_at) }}</td>
               <td class="py-3 flex gap-2">
@@ -641,8 +694,13 @@ const Chat = {
     };
 
     watch(selectedDocIds, (newIds) => {
+      sessionStorage.setItem('chat_doc_ids', JSON.stringify(newIds));
       messages.value = [];
       fetchHistory(newIds);
+    }, { deep: true });
+
+    watch(selectedProvider, (val) => {
+      sessionStorage.setItem('chat_provider', val);
     });
 
     const sendMessage = async () => {
@@ -682,17 +740,35 @@ const Chat = {
         ]);
         documents.value = docRes.data;
         availableModels.value = modelRes.data;
+
+        // 모델 복원: URL 파라미터 → sessionStorage → 첫 번째 모델 순
         if (route.query.provider) {
           selectedProvider.value = route.query.provider;
-        } else if (availableModels.value.length > 0) {
-          selectedProvider.value = availableModels.value[0].id;
+        } else {
+          const savedProvider = sessionStorage.getItem('chat_provider');
+          if (savedProvider && availableModels.value.some(m => m.id === savedProvider)) {
+            selectedProvider.value = savedProvider;
+          } else if (availableModels.value.length > 0) {
+            selectedProvider.value = availableModels.value[0].id;
+          }
         }
       } catch (e) { console.error(e); }
 
+      // 문서 복원: URL 파라미터 → sessionStorage 순
       if (route.query.document_ids) {
         selectedDocIds.value = route.query.document_ids.split(',').map(Number);
       } else if (route.query.document_id) {
         selectedDocIds.value = [parseInt(route.query.document_id)];
+      } else {
+        const savedIds = sessionStorage.getItem('chat_doc_ids');
+        if (savedIds) {
+          try {
+            const parsed = JSON.parse(savedIds);
+            // 현재 문서 목록에 실제 존재하는 ID만 복원 (삭제된 문서 제외)
+            const validIds = parsed.filter(id => documents.value.some(d => d.id === id));
+            if (validIds.length > 0) selectedDocIds.value = validIds;
+          } catch (_) {}
+        }
       }
     });
 
@@ -701,22 +777,27 @@ const Chat = {
       return m?.badge || '';
     });
 
+    const renderMarkdown = (text) => {
+      if (!text) return '';
+      return marked.parse(text);
+    };
+
     return {
       documents, selectedDocIds, docSelectorOpen, selectedProvider, availableModels,
       messages, inputText, loading, msgBox, sendMessage, selectedModelBadge, errorPopup,
+      renderMarkdown,
     };
   }
 };
 
-// ─── Questions ───────────────────────────────
+// ─── Questions ────────────────────────────────────────────
 const Questions = {
   template: `
     <div class="p-8">
       <h1 class="text-3xl font-bold mb-6">문제은행</h1>
 
-      <!-- 문서 드롭다운 backdrop -->
+      <!-- 문서/모델 선택 패널 -->
       <div v-if="docSelectorOpen" class="fixed inset-0 z-20" @click="docSelectorOpen = false"></div>
-
       <div class="bg-white rounded-xl shadow p-6 mb-6">
         <div class="flex flex-wrap items-center gap-4">
           <div class="relative flex items-center gap-2">
@@ -746,37 +827,19 @@ const Questions = {
           </div>
           <div class="flex items-center gap-2">
             <span class="text-sm font-medium text-gray-500">모델:</span>
-            <select
-              v-model="selectedProvider"
-              class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-            >
+            <select v-model="selectedProvider" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500">
               <option v-for="m in availableModels" :key="m.id" :value="m.id">{{ m.name }}{{ m.badge ? ' [' + m.badge + ']' : '' }}</option>
             </select>
           </div>
-          <button
-            @click="generateQuestions"
-            :disabled="selectedDocIds.length === 0 || generating"
-            class="bg-purple-600 text-white px-5 py-2 rounded-lg font-semibold hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-          >
+          <button @click="generateQuestions" :disabled="selectedDocIds.length === 0 || generating"
+            class="bg-purple-600 text-white px-5 py-2 rounded-lg font-semibold hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2">
             <span v-if="generating" class="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span>
             {{ generating ? 'AI가 문제를 생성 중...' : '문제 생성하기' }}
           </button>
-          <button
-            v-if="questions.length > 0"
-            @click="clearQuestions"
-            class="bg-gray-200 text-gray-700 px-5 py-2 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
-          >
-            문제 비우기
-          </button>
-          <button
-            v-if="hasWrongQuestions"
-            @click="reviewMode = !reviewMode"
-            :class="reviewMode ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-red-100 text-red-700 hover:bg-red-200'"
-            class="px-5 py-2 rounded-lg font-semibold transition-colors flex items-center gap-2"
-          >
-            {{ reviewMode ? '전체 보기' : '틀린 문제 복습하기' }}
-          </button>
-          <router-link v-if="documents.length === 0" to="/upload" class="text-purple-600 text-sm hover:underline">파일 업로드하기 →</router-link>
+          <button v-if="questions.length > 0" @click="clearQuestions"
+            class="bg-gray-200 text-gray-700 px-5 py-2 rounded-lg font-semibold hover:bg-gray-300 transition-colors">문제 비우기</button>
+          <button v-if="hasWrongQuestions && !quizStarted && !finished" @click="startReview"
+            class="bg-red-100 text-red-700 px-5 py-2 rounded-lg font-semibold hover:bg-red-200 transition-colors">틀린 문제 복습하기</button>
         </div>
         <p v-if="selectedModelBadge" class="mt-1.5 text-[11px] text-amber-600 flex items-center gap-1">
           <span>⚠</span>
@@ -785,67 +848,135 @@ const Questions = {
         </p>
       </div>
 
-      <!-- 점수 배너 -->
-      <div v-if="submitted" class="mb-6 p-5 rounded-xl text-center font-bold text-lg"
-           :class="score.correct / score.total >= 0.7 ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'">
-        {{ score.total }}문제 중 {{ score.correct }}문제 정답 ({{ Math.round(score.correct / score.total * 100) }}%)
-        <button @click="resetQuiz" class="ml-4 text-sm font-normal underline">다시 풀기</button>
+      <!-- 빈 상태 -->
+      <div v-if="!generating && questions.length === 0 && selectedDocIds.length > 0" class="bg-gray-50 rounded-xl p-8 text-center text-gray-400">선택한 문서의 문제가 없습니다. "문제 생성하기"를 클릭하세요.</div>
+      <div v-if="selectedDocIds.length === 0" class="bg-gray-50 rounded-xl p-8 text-center text-gray-400">문서를 하나 이상 선택하면 문제를 불러오거나 생성할 수 있습니다.</div>
+
+      <!-- 퀴즈 시작 전 목록 -->
+      <div v-if="questions.length > 0 && !quizStarted && !finished" class="space-y-4">
+        <div class="bg-white rounded-xl shadow p-5 flex items-center justify-between">
+          <div>
+            <p class="font-semibold text-gray-700">총 {{ questions.length }}문제</p>
+            <p class="text-sm text-gray-400 mt-0.5">정답 {{ solvedCount }}개 · 오답 {{ wrongCount }}개 · 신규 {{ newCount }}개</p>
+          </div>
+          <button @click="startQuiz(false)" class="bg-purple-600 text-white px-6 py-2.5 rounded-lg font-semibold hover:bg-purple-700 transition-colors">전체 풀기 →</button>
+        </div>
+        <div v-for="(q, i) in questions" :key="q.id" class="bg-white rounded-xl shadow px-5 py-3 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="text-sm font-bold text-purple-500">Q{{ i + 1 }}</span>
+            <span class="text-sm text-gray-700 truncate max-w-lg">{{ q.question }}</span>
+          </div>
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <!-- 신뢰도 뱃지 -->
+            <span v-if="q.faithfulness_score !== null && q.faithfulness_score !== undefined"
+              class="text-[11px] font-bold px-2 py-0.5 rounded-full cursor-default"
+              :class="q.faithfulness_score >= 80 ? 'bg-green-100 text-green-700' : q.faithfulness_score >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600'"
+              :title="'문서 신뢰도: ' + q.faithfulness_score + '%'">
+              {{ q.faithfulness_score >= 80 ? '🟢' : q.faithfulness_score >= 50 ? '🟡' : '🔴' }} {{ q.faithfulness_score }}%
+            </span>
+            <!-- 풀이 상태 뱃지 -->
+            <span class="text-[11px] font-bold px-2 py-0.5 rounded-full"
+              :class="q.status === 'solved' ? 'bg-green-100 text-green-700' : q.status === 'wrong' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'">
+              {{ q.status === 'solved' ? '✓ 완료' : q.status === 'wrong' ? '✗ 오답' : '미풀이' }}
+            </span>
+          </div>
+        </div>
       </div>
 
-      <!-- 문제 없음 안내 -->
-      <div v-if="!generating && questions.length === 0 && selectedDocIds.length > 0" class="bg-gray-50 rounded-xl p-8 text-center text-gray-400">
-        선택한 문서의 문제가 없습니다. "문제 생성하기"를 클릭하세요.
-      </div>
-      <div v-if="selectedDocIds.length === 0" class="bg-gray-50 rounded-xl p-8 text-center text-gray-400">
-        문서를 하나 이상 선택하면 문제를 불러오거나 생성할 수 있습니다.
-      </div>
-
-      <!-- 문제 카드 목록 -->
-      <div v-if="displayedQuestions.length > 0" class="space-y-6">
-        <div v-for="(q, qi) in displayedQuestions" :key="q.id" class="bg-white rounded-xl shadow p-6 relative">
-          <!-- 상태 배지 -->
-          <div class="absolute top-4 right-6 flex gap-2">
-            <div v-if="q.status === 'solved'" class="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-green-200">
-              ✓ 학습 완료
+      <!-- 퀴즈 진행 중 -->
+      <div v-if="quizStarted && !finished && currentQ">
+        <!-- 상단 진행/정답률 바 -->
+        <div class="bg-white rounded-xl shadow p-4 mb-4 flex items-center gap-4">
+          <div class="flex-1">
+            <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+              <span>진행률</span>
+              <span>{{ currentIdx + 1 }} / {{ activeQuestions.length }}</span>
             </div>
-            <div v-if="q.status === 'wrong'" class="bg-red-100 text-red-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-red-200">
-              ✗ 다시 풀기
+            <div class="w-full bg-gray-100 rounded-full h-2">
+              <div class="bg-purple-500 h-2 rounded-full transition-all" :style="{width: (currentIdx / activeQuestions.length * 100) + '%'}"></div>
             </div>
           </div>
-          <p class="font-semibold text-gray-800 mb-4 pr-24">
-            <span class="text-purple-600 mr-2">Q{{ reviewMode ? qi + 1 : questions.indexOf(q) + 1 }}.</span>{{ q.question }}
-          </p>
-          <div class="space-y-2">
-            <label
-              v-for="choice in q.choices"
-              :key="choice"
-              class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors"
-              :class="choiceClass(q.id, choice)"
-            >
-              <input
-                type="radio"
-                :name="'q' + q.id"
-                :value="choice"
-                v-model="userAnswers[q.id]"
-                :disabled="submitted"
-                class="accent-purple-600"
-              >
-              <span class="text-sm">{{ choice }}</span>
-              <span v-if="submitted && choice === results[q.id]?.correct_answer" class="ml-auto text-green-600 text-xs font-bold">정답</span>
-            </label>
+          <div class="text-center flex-shrink-0">
+            <p class="text-xs text-gray-400">정답률</p>
+            <p class="text-xl font-bold" :class="accuracy >= 70 ? 'text-green-600' : accuracy >= 50 ? 'text-amber-500' : 'text-red-500'">
+              {{ accuracy }}%
+            </p>
+            <p class="text-[10px] text-gray-400">{{ score.correct }} / {{ score.total }}</p>
           </div>
         </div>
 
-        <!-- 채점 버튼 -->
-        <div v-if="!submitted" class="flex justify-center pt-2">
-          <button
-            @click="submitAnswers"
-            :disabled="submitting || Object.keys(userAnswers).length < questions.length"
-            class="bg-blue-600 text-white px-10 py-3 rounded-xl font-bold text-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
-          >
-            <span v-if="submitting" class="animate-spin inline-block w-5 h-5 border-2 border-white border-t-transparent rounded-full"></span>
-            {{ submitting ? '채점 중...' : '채점하기' }}
-          </button>
+        <!-- 문제 카드 -->
+        <div class="bg-white rounded-xl shadow p-6">
+          <p class="font-semibold text-gray-800 text-base mb-5">
+            <span class="text-purple-600 mr-2">Q{{ currentIdx + 1 }}.</span>{{ currentQ.question }}
+          </p>
+
+          <!-- 힌트 -->
+          <div v-if="!answered" class="mb-4">
+            <button @click="showHint = !showHint"
+              class="text-xs text-amber-600 border border-amber-300 bg-amber-50 px-3 py-1 rounded-lg hover:bg-amber-100 transition-colors flex items-center gap-1">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.362.362A9.003 9.003 0 0112 21a9.003 9.003 0 01-4.774-1.331l-.362-.362z"/></svg>
+              {{ showHint ? '힌트 숨기기' : '힌트 보기' }}
+            </button>
+            <div v-if="showHint" class="mt-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+              {{ currentQ.hint || '정답을 선택지에서 신중하게 골라보세요.' }}
+            </div>
+          </div>
+
+          <!-- 선택지 -->
+          <div class="space-y-2 mb-5">
+            <label v-for="choice in currentQ.choices" :key="choice"
+              class="flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors"
+              :class="choiceClass(choice)">
+              <input type="radio" :name="'q' + currentQ.id" :value="choice" v-model="currentAnswer" :disabled="answered" class="accent-purple-600 flex-shrink-0">
+              <span class="text-sm flex-1">{{ choice }}</span>
+              <span v-if="answered && choice === currentResult.correct_answer" class="text-green-600 text-xs font-bold flex-shrink-0">✓ 정답</span>
+              <span v-if="answered && choice === currentAnswer && choice !== currentResult.correct_answer" class="text-red-500 text-xs font-bold flex-shrink-0">✗</span>
+            </label>
+          </div>
+
+          <!-- 제출 전 버튼 -->
+          <div v-if="!answered" class="flex justify-end">
+            <button @click="submitCurrent" :disabled="!currentAnswer || submitting"
+              class="bg-purple-600 text-white px-8 py-2.5 rounded-lg font-semibold hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2">
+              <span v-if="submitting" class="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full"></span>
+              제출
+            </button>
+          </div>
+
+          <!-- 결과 피드백 -->
+          <div v-if="answered" class="mt-1">
+            <div class="p-3 rounded-lg text-sm font-semibold mb-4"
+              :class="currentResult.is_correct ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'">
+              {{ currentResult.is_correct ? '✓ 정답입니다!' : '✗ 오답입니다. 정답: ' + currentResult.correct_answer }}
+            </div>
+            <div class="flex justify-end">
+              <button v-if="currentIdx < activeQuestions.length - 1" @click="nextQuestion"
+                class="bg-purple-600 text-white px-8 py-2.5 rounded-lg font-semibold hover:bg-purple-700 transition-colors">
+                다음 문제 →
+              </button>
+              <button v-else @click="finishQuiz"
+                class="bg-green-600 text-white px-8 py-2.5 rounded-lg font-semibold hover:bg-green-700 transition-colors">
+                결과 보기
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 결과 화면 -->
+      <div v-if="finished" class="bg-white rounded-xl shadow p-8 text-center">
+        <div class="text-5xl mb-4">{{ score.correct / score.total >= 0.8 ? '🎉' : score.correct / score.total >= 0.5 ? '👍' : '📖' }}</div>
+        <p class="text-2xl font-bold mb-1" :class="score.correct / score.total >= 0.7 ? 'text-green-600' : 'text-orange-500'">
+          {{ score.total }}문제 중 {{ score.correct }}문제 정답
+        </p>
+        <p class="text-4xl font-black mb-6" :class="score.correct / score.total >= 0.7 ? 'text-green-500' : 'text-orange-400'">
+          {{ Math.round(score.correct / score.total * 100) }}%
+        </p>
+        <div class="flex justify-center gap-3">
+          <button @click="startQuiz(false)" class="bg-purple-600 text-white px-6 py-2.5 rounded-lg font-semibold hover:bg-purple-700 transition-colors">전체 다시 풀기</button>
+          <button v-if="hasWrongQuestions" @click="startReview" class="bg-red-100 text-red-700 px-6 py-2.5 rounded-lg font-semibold hover:bg-red-200 transition-colors">틀린 문제만 복습</button>
+          <button @click="resetToList" class="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-lg font-semibold hover:bg-gray-200 transition-colors">목록으로</button>
         </div>
       </div>
     </div>
@@ -858,18 +989,26 @@ const Questions = {
     const selectedProvider = ref('openai');
     const availableModels  = ref([]);
     const questions        = ref([]);
-    const userAnswers      = ref({});
-    const results          = ref({});
     const generating       = ref(false);
     const submitting       = ref(false);
-    const submitted        = ref(false);
-    const score            = ref({ correct: 0, total: 0 });
-    const reviewMode       = ref(false);
 
-    const hasWrongQuestions  = Vue.computed(() => questions.value.some(q => q.status === 'wrong'));
-    const displayedQuestions = Vue.computed(() =>
-      reviewMode.value ? questions.value.filter(q => q.status === 'wrong') : questions.value
-    );
+    // 퀴즈 진행 상태
+    const quizStarted     = ref(false);
+    const finished        = ref(false);
+    const activeQuestions = ref([]);
+    const currentIdx      = ref(0);
+    const currentAnswer   = ref('');
+    const answered        = ref(false);
+    const currentResult   = ref(null);
+    const showHint        = ref(false);
+    const score           = ref({ correct: 0, total: 0 });
+
+    const currentQ        = Vue.computed(() => activeQuestions.value[currentIdx.value] || null);
+    const accuracy        = Vue.computed(() => score.value.total > 0 ? Math.round(score.value.correct / score.value.total * 100) : 0);
+    const hasWrongQuestions = Vue.computed(() => questions.value.some(q => q.status === 'wrong'));
+    const solvedCount     = Vue.computed(() => questions.value.filter(q => q.status === 'solved').length);
+    const wrongCount      = Vue.computed(() => questions.value.filter(q => q.status === 'wrong').length);
+    const newCount        = Vue.computed(() => questions.value.filter(q => q.status === 'new').length);
 
     const fetchQuestions = async (docIds) => {
       if (!docIds || docIds.length === 0) { questions.value = []; return; }
@@ -882,14 +1021,14 @@ const Questions = {
     };
 
     watch(selectedDocIds, async (newIds) => {
-      resetQuiz();
+      resetToList();
       await fetchQuestions(newIds);
     });
 
     const generateQuestions = async () => {
       if (selectedDocIds.value.length === 0 || generating.value) return;
       generating.value = true;
-      resetQuiz();
+      resetToList();
       try {
         await axios.post(`${API_URL}/api/questions/generate`,
           { document_ids: selectedDocIds.value },
@@ -905,61 +1044,87 @@ const Questions = {
 
     const clearQuestions = async () => {
       if (selectedDocIds.value.length === 0) return;
-      if (!confirm('선택한 문서와 관련된 모든 문제를 삭제하시겠습니까? (풀이 기록도 함께 삭제됩니다.)')) return;
+      if (!confirm('선택한 문서와 관련된 모든 문제를 삭제하시겠습니까?')) return;
       try {
         for (const docId of selectedDocIds.value) {
           await axios.delete(`${API_URL}/api/questions`, { params: { document_id: docId } });
         }
         questions.value = [];
-        resetQuiz();
-        alert('문제함이 비워졌습니다.');
+        resetToList();
       } catch (e) {
         alert('삭제 실패: ' + (e.response?.data?.detail || e.message));
       }
     };
 
-    const submitAnswers = async () => {
-      if (submitting.value) return;
+    const startQuiz = (wrongOnly) => {
+      activeQuestions.value = wrongOnly
+        ? questions.value.filter(q => q.status === 'wrong')
+        : [...questions.value];
+      currentIdx.value    = 0;
+      currentAnswer.value = '';
+      answered.value      = false;
+      currentResult.value = null;
+      showHint.value      = false;
+      score.value         = { correct: 0, total: 0 };
+      quizStarted.value   = true;
+      finished.value      = false;
+    };
+
+    const startReview = () => startQuiz(true);
+
+    const submitCurrent = async () => {
+      if (!currentAnswer.value || answered.value || submitting.value) return;
       submitting.value = true;
-      const resultMap = {};
-      let correct = 0;
-      for (const q of questions.value) {
-        const answer = userAnswers.value[q.id] ?? '';
-        try {
-          const res = await axios.post(`${API_URL}/api/questions/attempt`, {
-            question_id: q.id, user_answer: answer,
-          });
-          resultMap[q.id] = res.data;
-          if (res.data.is_correct) correct++;
-        } catch (e) {
-          resultMap[q.id] = { is_correct: false, correct_answer: '' };
-        }
+      try {
+        const res = await axios.post(`${API_URL}/api/questions/attempt`, {
+          question_id: currentQ.value.id,
+          user_answer: currentAnswer.value,
+        });
+        currentResult.value = res.data;
+        answered.value = true;
+        score.value.total++;
+        if (res.data.is_correct) score.value.correct++;
+      } catch (e) {
+        alert('채점 오류: ' + (e.response?.data?.detail || e.message));
+      } finally {
+        submitting.value = false;
       }
-      results.value    = resultMap;
-      score.value      = { correct, total: questions.value.length };
-      submitted.value  = true;
-      submitting.value = false;
+    };
+
+    const nextQuestion = () => {
+      currentIdx.value++;
+      currentAnswer.value = '';
+      answered.value      = false;
+      currentResult.value = null;
+      showHint.value      = false;
+    };
+
+    const finishQuiz = async () => {
+      finished.value = true;
       await fetchQuestions(selectedDocIds.value);
     };
 
-    const resetQuiz = () => {
-      userAnswers.value = {};
-      results.value     = {};
-      submitted.value   = false;
-      score.value       = { correct: 0, total: 0 };
+    const resetToList = () => {
+      quizStarted.value   = false;
+      finished.value      = false;
+      activeQuestions.value = [];
+      currentIdx.value    = 0;
+      currentAnswer.value = '';
+      answered.value      = false;
+      currentResult.value = null;
+      showHint.value      = false;
+      score.value         = { correct: 0, total: 0 };
     };
 
-    const choiceClass = (qId, choice) => {
-      if (!submitted.value) {
-        return userAnswers.value[qId] === choice
+    const choiceClass = (choice) => {
+      if (!answered.value) {
+        return currentAnswer.value === choice
           ? 'border-purple-400 bg-purple-50'
           : 'border-gray-200 hover:border-purple-300 hover:bg-purple-50';
       }
-      const r = results.value[qId];
-      if (!r) return 'border-gray-200';
-      if (choice === r.correct_answer) return 'border-green-400 bg-green-50';
-      if (choice === userAnswers.value[qId] && !r.is_correct) return 'border-red-400 bg-red-50';
-      return 'border-gray-200';
+      if (choice === currentResult.value?.correct_answer) return 'border-green-400 bg-green-50';
+      if (choice === currentAnswer.value && choice !== currentResult.value?.correct_answer) return 'border-red-300 bg-red-50';
+      return 'border-gray-200 opacity-50';
     };
 
     onMounted(async () => {
@@ -991,9 +1156,10 @@ const Questions = {
 
     return {
       documents, selectedDocIds, docSelectorOpen, selectedProvider, availableModels,
-      questions, userAnswers, results, generating, submitting, submitted, score,
-      reviewMode, hasWrongQuestions, displayedQuestions,
-      generateQuestions, clearQuestions, submitAnswers, resetQuiz, choiceClass, selectedModelBadge,
+      questions, generating, submitting,
+      quizStarted, finished, activeQuestions, currentIdx, currentAnswer, answered, currentResult, showHint, score,
+      currentQ, accuracy, hasWrongQuestions, solvedCount, wrongCount, newCount,
+      generateQuestions, clearQuestions, startQuiz, startReview, submitCurrent, nextQuestion, finishQuiz, resetToList, choiceClass, selectedModelBadge,
     };
   }
 };
@@ -1948,6 +2114,16 @@ const App = {
                 active-class="bg-yellow-500 hover:bg-yellow-500 text-gray-900">
                 <span>사용자 관리</span>
               </router-link>
+              <router-link to="/admin/ground-truths"
+                class="p-3 rounded-lg hover:bg-gray-800 transition-colors flex items-center gap-3"
+                active-class="bg-yellow-500 hover:bg-yellow-500 text-gray-900">
+                <span>정답 데이터셋</span>
+              </router-link>
+              <router-link to="/admin/evaluations"
+                class="p-3 rounded-lg hover:bg-gray-800 transition-colors flex items-center gap-3"
+                active-class="bg-yellow-500 hover:bg-yellow-500 text-gray-900">
+                <span>RAG 평가 이력</span>
+              </router-link>
             </div>
           </template>
           <!-- 회원 탈퇴 (숨김 메뉴) -->
@@ -2026,6 +2202,240 @@ const App = {
   components: { Login }
 };
 
+// ─── AdminGroundTruths ───────────────────────
+const AdminGroundTruths = {
+  template: `
+    <div class="p-8 max-w-5xl mx-auto">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-3xl font-bold">정답 데이터셋</h1>
+          <p class="text-sm text-gray-400 mt-1">RAG 평가용 이상적인 질문-답변 쌍을 관리합니다.</p>
+        </div>
+        <router-link to="/admin" class="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">← 관리자 대시보드</router-link>
+      </div>
+
+      <!-- 추가 폼 -->
+      <div class="bg-white rounded-xl shadow p-6 mb-6">
+        <h2 class="font-bold text-gray-800 mb-4">새 정답 데이터 추가</h2>
+        <div class="space-y-3">
+          <div>
+            <label class="text-sm font-medium text-gray-600 block mb-1">문서 선택</label>
+            <select v-model="form.document_id" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+              <option value="">-- 문서 선택 --</option>
+              <option v-for="d in documents" :key="d.id" :value="d.id">{{ d.filename }}</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-sm font-medium text-gray-600 block mb-1">질문</label>
+            <input v-model="form.question" placeholder="평가용 질문을 입력하세요" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div>
+            <label class="text-sm font-medium text-gray-600 block mb-1">이상적인 정답</label>
+            <textarea v-model="form.ideal_answer" rows="3" placeholder="이상적인 답변을 입력하세요" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm resize-none"></textarea>
+          </div>
+          <button @click="addGroundTruth" :disabled="adding || !form.document_id || !form.question || !form.ideal_answer"
+            class="bg-yellow-500 text-white px-5 py-2 rounded-lg font-semibold text-sm hover:bg-yellow-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            {{ adding ? '추가 중...' : '추가' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- 목록 -->
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div v-if="loading" class="p-8 text-center text-gray-400">불러오는 중...</div>
+        <div v-else-if="!items.length" class="p-8 text-center text-gray-400">정답 데이터가 없습니다.</div>
+        <table v-else class="w-full text-sm">
+          <thead class="bg-gray-50 border-b">
+            <tr class="text-left text-gray-500">
+              <th class="px-4 py-3 font-medium">문서</th>
+              <th class="px-4 py-3 font-medium">질문</th>
+              <th class="px-4 py-3 font-medium">이상적인 정답</th>
+              <th class="px-4 py-3 font-medium">등록일</th>
+              <th class="px-4 py-3"></th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <tr v-for="item in items" :key="item.id" class="hover:bg-gray-50">
+              <td class="px-4 py-3 text-gray-600 max-w-[140px] truncate">{{ item.filename }}</td>
+              <td class="px-4 py-3 text-gray-800 max-w-[200px]">{{ item.question }}</td>
+              <td class="px-4 py-3 text-gray-600 max-w-[250px] truncate">{{ item.ideal_answer }}</td>
+              <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{{ item.created_at }}</td>
+              <td class="px-4 py-3">
+                <button @click="deleteItem(item.id)"
+                  class="text-xs text-red-500 hover:text-red-700 font-medium">삭제</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="total > limit" class="px-4 py-3 border-t flex items-center justify-between text-sm text-gray-500">
+          <span>총 {{ total }}건</span>
+          <div class="flex gap-2">
+            <button :disabled="page <= 1" @click="page--; load()" class="px-3 py-1 rounded border hover:bg-gray-50 disabled:opacity-40">이전</button>
+            <button :disabled="page * limit >= total" @click="page++; load()" class="px-3 py-1 rounded border hover:bg-gray-50 disabled:opacity-40">다음</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `,
+  setup() {
+    const items     = ref([]);
+    const documents = ref([]);
+    const total     = ref(0);
+    const page      = ref(1);
+    const limit     = 20;
+    const loading   = ref(true);
+    const adding    = ref(false);
+    const form      = ref({ document_id: '', question: '', ideal_answer: '' });
+
+    const load = async () => {
+      loading.value = true;
+      try {
+        const [gtRes, docRes] = await Promise.all([
+          axios.get(`${API_URL}/api/admin/ground-truths`, { params: { page: page.value, limit } }),
+          axios.get(`${API_URL}/api/admin/queries`, { params: { limit: 100 } }),
+        ]);
+        items.value     = gtRes.data.items;
+        total.value     = gtRes.data.total;
+        // 문서 목록: admin 쿼리에서 고유 문서 추출
+        const docRes2   = await axios.get(`${API_URL}/api/documents`);
+        documents.value = docRes2.data;
+      } catch (e) { console.error(e); }
+      finally { loading.value = false; }
+    };
+
+    const addGroundTruth = async () => {
+      if (adding.value) return;
+      adding.value = true;
+      try {
+        await axios.post(`${API_URL}/api/admin/ground-truths`, {
+          document_id:  parseInt(form.value.document_id),
+          question:     form.value.question,
+          ideal_answer: form.value.ideal_answer,
+        });
+        form.value = { document_id: '', question: '', ideal_answer: '' };
+        await load();
+      } catch (e) { alert('추가 실패: ' + (e.response?.data?.detail || e.message)); }
+      finally { adding.value = false; }
+    };
+
+    const deleteItem = async (id) => {
+      if (!confirm('삭제하시겠습니까?')) return;
+      try {
+        await axios.delete(`${API_URL}/api/admin/ground-truths/${id}`);
+        await load();
+      } catch (e) { alert('삭제 실패'); }
+    };
+
+    onMounted(load);
+    return { items, documents, total, page, limit, loading, adding, form, load, addGroundTruth, deleteItem };
+  }
+};
+
+// ─── AdminEvaluations ────────────────────────
+const AdminEvaluations = {
+  template: `
+    <div class="p-8 max-w-6xl mx-auto">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-3xl font-bold">RAG 평가 이력</h1>
+          <p class="text-sm text-gray-400 mt-1">채팅 응답별 자동 품질 평가 결과 (휴리스틱 기반)</p>
+        </div>
+        <router-link to="/admin" class="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">← 관리자 대시보드</router-link>
+      </div>
+
+      <!-- 평균 요약 카드 -->
+      <div v-if="items.length" class="grid grid-cols-3 gap-4 mb-6">
+        <div v-for="m in metricSummary" :key="m.key" class="bg-white rounded-xl shadow p-4 text-center">
+          <p class="text-xs text-gray-500 font-medium mb-1">{{ m.label }}</p>
+          <p class="text-2xl font-bold" :class="m.color">{{ m.avg }}%</p>
+          <p class="text-xs text-gray-400 mt-0.5">{{ m.desc }}</p>
+        </div>
+      </div>
+
+      <!-- 테이블 -->
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div v-if="loading" class="p-8 text-center text-gray-400">불러오는 중...</div>
+        <div v-else-if="!items.length" class="p-8 text-center text-gray-400">채팅 후 자동으로 평가 데이터가 쌓입니다.</div>
+        <table v-else class="w-full text-sm">
+          <thead class="bg-gray-50 border-b">
+            <tr class="text-left text-gray-500">
+              <th class="px-4 py-3 font-medium">질문</th>
+              <th class="px-4 py-3 font-medium">모델</th>
+              <th class="px-4 py-3 font-medium text-center">충실도</th>
+              <th class="px-4 py-3 font-medium text-center">연관성</th>
+              <th class="px-4 py-3 font-medium text-center">정밀도</th>
+              <th class="px-4 py-3 font-medium">평가일시</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100">
+            <tr v-for="ev in items" :key="ev.id" class="hover:bg-gray-50">
+              <td class="px-4 py-3 text-gray-700 max-w-xs truncate">{{ ev.query }}</td>
+              <td class="px-4 py-3">
+                <span class="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded font-mono">{{ ev.model }}</span>
+              </td>
+              <td class="px-4 py-3 text-center">
+                <span class="font-semibold" :class="scoreColor(ev.faithfulness)">{{ ev.faithfulness }}%</span>
+              </td>
+              <td class="px-4 py-3 text-center">
+                <span class="font-semibold" :class="scoreColor(ev.answer_relevancy)">{{ ev.answer_relevancy }}%</span>
+              </td>
+              <td class="px-4 py-3 text-center">
+                <span class="font-semibold" :class="scoreColor(ev.context_precision)">{{ ev.context_precision }}%</span>
+              </td>
+              <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap">{{ ev.evaluated_at }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="total > limit" class="px-4 py-3 border-t flex items-center justify-between text-sm text-gray-500">
+          <span>총 {{ total }}건</span>
+          <div class="flex gap-2">
+            <button :disabled="page <= 1" @click="page--; load()" class="px-3 py-1 rounded border hover:bg-gray-50 disabled:opacity-40">이전</button>
+            <button :disabled="page * limit >= total" @click="page++; load()" class="px-3 py-1 rounded border hover:bg-gray-50 disabled:opacity-40">다음</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `,
+  setup() {
+    const items   = ref([]);
+    const total   = ref(0);
+    const page    = ref(1);
+    const limit   = 20;
+    const loading = ref(true);
+
+    const avg = (key) => {
+      if (!items.value.length) return 0;
+      const vals = items.value.map(i => i[key]).filter(v => v !== null && v !== undefined);
+      return vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+    };
+
+    const metricSummary = Vue.computed(() => [
+      { key: 'faithfulness',      label: '평균 충실도',  color: 'text-blue-600',  desc: '응답이 컨텍스트에 얼마나 충실한가', avg: avg('faithfulness') },
+      { key: 'answer_relevancy',  label: '평균 연관성',  color: 'text-green-600', desc: '응답이 질문과 얼마나 관련 있는가',   avg: avg('answer_relevancy') },
+      { key: 'context_precision', label: '평균 정밀도',  color: 'text-purple-600',desc: '검색된 청크가 얼마나 정확한가',       avg: avg('context_precision') },
+    ]);
+
+    const scoreColor = (v) => {
+      if (v >= 70) return 'text-green-600';
+      if (v >= 40) return 'text-yellow-600';
+      return 'text-red-500';
+    };
+
+    const load = async () => {
+      loading.value = true;
+      try {
+        const res   = await axios.get(`${API_URL}/api/admin/evaluations`, { params: { page: page.value, limit } });
+        items.value = res.data.items;
+        total.value = res.data.total;
+      } catch (e) { console.error(e); }
+      finally { loading.value = false; }
+    };
+
+    onMounted(load);
+    return { items, total, page, limit, loading, metricSummary, scoreColor, load };
+  }
+};
+
 // ─── Router ──────────────────────────────────
 const routes = [
   { path: '/',            component: Dashboard },
@@ -2033,9 +2443,11 @@ const routes = [
   { path: '/chat',        component: Chat },
   { path: '/questions',   component: Questions },
   { path: '/review',      component: WrongAnswersReview },
-  { path: '/admin',       component: AdminDashboard },
-  { path: '/admin/logs',  component: QueryLogs },
-  { path: '/admin/users', component: AdminUsers },
+  { path: '/admin',               component: AdminDashboard },
+  { path: '/admin/logs',          component: QueryLogs },
+  { path: '/admin/users',         component: AdminUsers },
+  { path: '/admin/ground-truths', component: AdminGroundTruths },
+  { path: '/admin/evaluations',   component: AdminEvaluations },
 ];
 
 const router = createRouter({ history: createWebHashHistory(), routes });

@@ -28,12 +28,13 @@ from authlib.integrations.starlette_client import OAuth
 from backend.database import init_db, get_db
 from backend.models import (
     User, UserRole, Document, RagQuery, DocumentChunk,
-    QuizAttempt, QuizQuestion, RagEvaluation, StudySession, get_kst_now
+    RagRetrievedChunk, RagEvaluation, RagGroundTruth,
+    QuizAttempt, QuizQuestion, StudySession, get_kst_now
 )
 from backend.auth import get_current_user, require_admin, require_user
 
 # LangChain
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
+from langchain_community.document_loaders import PyPDFLoader, TextLoader, PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
@@ -218,21 +219,46 @@ class RAGEngine:
             return ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=GROQ_API_KEY)
         return None
 
+    @staticmethod
+    def _is_garbled(text: str) -> bool:
+        """한글/ASCII 비율이 낮으면 깨진 텍스트로 판단"""
+        if not text:
+            return True
+        normal = sum(1 for c in text if '\uAC00' <= c <= '\uD7A3' or c.isascii())
+        return normal / len(text) < 0.3
+
     def process_document(self, file_path: str, user_id: int, document_id: int = None, db: Session = None):
+        docs = None
         if file_path.endswith(".pdf"):
-            # PDF 로더 강화 (손상된 객체 무시 시도)
-            loader = PyPDFLoader(file_path)
+            # 1차: PyMuPDF (한글 인코딩 처리 우수)
+            try:
+                docs = PyMuPDFLoader(file_path).load()
+                sample = " ".join(d.page_content for d in docs[:3])
+                if self._is_garbled(sample):
+                    logger.warning(f"PyMuPDF 텍스트 깨짐 감지 — PyPDF로 재시도: {file_path}")
+                    docs = None
+            except Exception as e:
+                logger.warning(f"PyMuPDF 로드 실패 — PyPDF로 재시도: {e}")
+
+            # 2차 fallback: PyPDF
+            if docs is None:
+                try:
+                    docs = PyPDFLoader(file_path).load()
+                except Exception as e:
+                    logger.error(f"PDF 로드 최종 실패 ({file_path}): {e}")
+                    return
         else:
             try:
-                loader = TextLoader(file_path, encoding="utf-8")
-                docs = loader.load()
-            except:
-                loader = TextLoader(file_path, encoding="cp949")
-        
-        try:
-            docs = loader.load()
-        except Exception as e:
-            logger.error(f"파일 로드 실패 ({file_path}): {e}")
+                docs = TextLoader(file_path, encoding="utf-8").load()
+            except Exception:
+                try:
+                    docs = TextLoader(file_path, encoding="cp949").load()
+                except Exception as e:
+                    logger.error(f"텍스트 로드 실패 ({file_path}): {e}")
+                    return
+
+        if not docs:
+            logger.error(f"파일 로드 결과 없음: {file_path}")
             return
 
         # 메타데이터에 정보 주입 (보안 및 필터용)
@@ -288,14 +314,35 @@ class RAGEngine:
                 return meta.get("document_id") in doc_ids_set
             return True
 
-        retriever = self.vector_store.as_retriever(
-            search_kwargs={"k": 3, "filter": _filter}
-        )
-        retrieved = retriever.invoke(query)
-        
+        # /정리 요청인 경우 더 많은 청크를 가져옴
+        SUMMARY_KEYWORDS = ("요약", "전체 정리", "전체적으로 정리", "summarize", "summary", "overview")
+        is_summary = any(kw in query for kw in SUMMARY_KEYWORDS)
+        k = 10 if is_summary else 4
+
+        try:
+            retrieved_with_scores = self.vector_store.similarity_search_with_score(
+                query, k=k, filter=_filter
+            )
+        except Exception:
+            plain = self.vector_store.similarity_search(query, k=k, filter=_filter)
+            retrieved_with_scores = [(d, 0.0) for d in plain]
+
+        retrieved = [doc for doc, _ in retrieved_with_scores]
         sources   = list(set(os.path.basename(d.metadata.get("source", "알 수 없음")) for d in retrieved))
         context   = "\n".join(d.page_content for d in retrieved)
-        prompt    = f"다음 컨텍스트를 바탕으로 질문에 한국어로 답해주세요.\n\n컨텍스트:\n{context}\n\n질문: {query}"
+
+        if is_summary:
+            prompt = (
+                "당신은 문서 요약 전문가입니다. 아래 [문서 내용]을 바탕으로 질문에 한국어로 성실하게 답해주세요.\n"
+                "문서의 주요 내용, 핵심 개념, 중요한 포인트를 구조적으로 정리해 주세요.\n\n"
+                f"[문서 내용]\n{context}\n\n질문: {query}"
+            )
+        else:
+            prompt = (
+                "당신은 문서 기반 Q&A 전문가입니다. 아래 [문서 내용]을 바탕으로 질문에 한국어로 답해주세요.\n"
+                "문서에 관련 내용이 있으면 반드시 활용하고, 없으면 솔직하게 알려주세요.\n\n"
+                f"[문서 내용]\n{context}\n\n질문: {query}"
+            )
 
         try:
             response_obj  = llm.invoke(prompt)
@@ -304,7 +351,9 @@ class RAGEngine:
             input_tokens  = usage.get("input_tokens")  or usage.get("prompt_tokens")
             output_tokens = usage.get("output_tokens") or usage.get("completion_tokens")
             return {"answer": answer, "sources": sources,
-                    "input_tokens": input_tokens, "output_tokens": output_tokens}
+                    "input_tokens": input_tokens, "output_tokens": output_tokens,
+                    "retrieved_with_scores": retrieved_with_scores,
+                    "context": context}
         except Exception as e:
             err = str(e)
             if "429" in err or "RESOURCE_EXHAUSTED" in err or "quota" in err.lower() or "rate_limit" in err.lower() or "rate limit" in err.lower():
@@ -350,10 +399,10 @@ class RAGEngine:
 
         context = "\n".join(d.page_content for d in retrieved)
         logger.info(f"문제 생성용 컨텍스트 확보: {len(context)}자 (Docs: {document_ids})")
-        
+
         if not context.strip():
             logger.error("검색된 컨텍스트가 없습니다. 필터 조건을 확인하세요.")
-            return "[]"
+            return "[]", []
 
         prompt = (
             "당신은 시험 출제 위원입니다. 아래 [문서 내용]을 바탕으로 객관식 문제 5개를 만드세요.\n"
@@ -361,13 +410,91 @@ class RAGEngine:
             "1. 반드시 아래 [문서 내용]에 명시된 정보만을 근거로 하되, 자연스러운 문장을 위해 당신의 지식을 보태도 좋습니다.\n"
             "2. 절대 엉뚱한 분야의 문제는 내지 마세요.\n"
             "3. 반드시 한국어로만 작성하세요.\n"
-            "4. 출력 형식은 오직 하나의 JSON 배열이어야 합니다.\n\n"
+            "4. 출력 형식은 오직 하나의 JSON 배열이어야 합니다.\n"
+            "5. 각 문제에는 반드시 hint 필드를 포함하세요. hint는 정답을 직접 알려주지 않으면서 풀이 방향을 안내하는 짧은 힌트입니다.\n\n"
+            "출력 예시:\n"
+            '[{"question":"질문","options":["A","B","C","D"],"answer":"A","hint":"관련 개념은 ~와 관련이 있습니다."}]\n\n'
             f"[문서 내용]\n{context}"
         )
-        return llm.invoke(prompt).content
+        return llm.invoke(prompt).content, retrieved
 
 
 rag_engine = RAGEngine()
+
+
+# ─── RAG 품질 평가 헬퍼 ──────────────────────
+
+def _tokenize(text: str) -> set:
+    import re
+    return set(w for w in re.findall(r'[가-힣a-zA-Z0-9]+', text.lower()) if len(w) >= 2)
+
+
+def _compute_quiz_faithfulness(question: str, answer: str, chunk_content: str | None) -> float | None:
+    """문제+정답 키워드가 출처 청크에 얼마나 포함됐는지 (0.0~1.0). 청크 없으면 None."""
+    if not chunk_content:
+        return None
+    quiz_words  = _tokenize(question + " " + answer)
+    chunk_words = _tokenize(chunk_content)
+    if not quiz_words:
+        return None
+    overlap = len(quiz_words & chunk_words) / len(quiz_words)
+    return round(min(overlap, 1.0), 4)
+
+
+def _compute_simple_evaluation(query: str, context_docs: list, response: str) -> dict:
+    """ground truth 없이 계산 가능한 휴리스틱 RAG 품질 지표"""
+    query_words    = _tokenize(query)
+    response_words = _tokenize(response)
+    context_words  = _tokenize(" ".join(d.page_content for d in context_docs))
+
+    # faithfulness: 응답 단어 중 컨텍스트에 존재하는 비율
+    faithfulness = (
+        len(response_words & context_words) / len(response_words)
+        if response_words else 0.0
+    )
+
+    # answer_relevancy: 질문 키워드 중 응답에 포함된 비율
+    answer_relevancy = (
+        len(query_words & response_words) / len(query_words)
+        if query_words else 0.0
+    )
+
+    # context_precision: 청크 중 응답에 실질 기여한 청크 비율
+    if context_docs:
+        contributing = sum(
+            1 for d in context_docs
+            if len(tokenize(d.page_content) & response_words) >= 3
+        )
+        context_precision = contributing / len(context_docs)
+    else:
+        context_precision = 0.0
+
+    return {
+        "faithfulness":      min(faithfulness, 1.0),
+        "answer_relevancy":  min(answer_relevancy, 1.0),
+        "context_precision": min(context_precision, 1.0),
+        "context_recall":    None,   # ground truth 없이 계산 불가
+    }
+
+
+def _save_retrieved_chunks(db: Session, query_id: int, retrieved_with_scores: list):
+    """검색된 청크를 rag_retrieved_chunks 테이블에 저장"""
+    for rank, (doc, score) in enumerate(retrieved_with_scores, 1):
+        doc_id = doc.metadata.get("document_id")
+        if not doc_id:
+            continue
+        # content로 DB 청크 매칭
+        db_chunk = db.query(DocumentChunk).filter(
+            DocumentChunk.document_id == doc_id,
+            DocumentChunk.content == doc.page_content,
+        ).first()
+        if db_chunk:
+            db.add(RagRetrievedChunk(
+                query_id         = query_id,
+                chunk_id         = db_chunk.id,
+                similarity_score = float(score),
+                rank             = rank,
+            ))
 
 
 # ─── Request Models ──────────────────────────
@@ -541,6 +668,28 @@ async def get_dashboard(
         for q in recent_rows
     ]
 
+    # ── 최근 학습 세션 5건 ──
+    session_rows = (
+        db.query(StudySession, Document)
+        .join(Document, StudySession.document_id == Document.id)
+        .filter(StudySession.user_id == current_user.id)
+        .order_by(StudySession.last_accessed_at.desc())
+        .limit(5)
+        .all()
+    )
+    study_sessions = [
+        {
+            "document_id":      s.document_id,
+            "filename":         doc.filename,
+            "started_at":       s.started_at.strftime("%Y-%m-%d") if s.started_at else "-",
+            "last_accessed_at": s.last_accessed_at.strftime("%Y-%m-%d %H:%M") if s.last_accessed_at else "-",
+        }
+        for s, doc in session_rows
+    ]
+    total_study_docs = db.query(StudySession.document_id).filter(
+        StudySession.user_id == current_user.id
+    ).distinct().count()
+
     # ── 틀린 문제 10건 (최근순) ──
     wrong_rows = (
         db.query(QuizAttempt, QuizQuestion)
@@ -565,16 +714,18 @@ async def get_dashboard(
 
     return {
         "stats": {
-            "total_docs":    total_docs,
-            "total_queries": total_queries,
-            "total_attempts": total_attempts,
-            "correct_count": correct_count,
-            "correct_rate":  correct_rate,
-            "progress":      correct_rate,
+            "total_docs":       total_docs,
+            "total_queries":    total_queries,
+            "total_attempts":   total_attempts,
+            "correct_count":    correct_count,
+            "correct_rate":     correct_rate,
+            "progress":         correct_rate,
+            "total_study_docs": total_study_docs,
         },
         "model_usage":    model_usage,
         "recent_queries": recent_queries,
         "wrong_answers":  wrong_answers,
+        "study_sessions": study_sessions,
     }
 
 
@@ -583,12 +734,14 @@ async def get_documents(
     current_user: User = Depends(require_user),
     db: Session = Depends(get_db),
 ):
-    docs = (
-        db.query(Document)
+    rows = (
+        db.query(Document, func.count(DocumentChunk.id).label("chunk_count"))
+        .outerjoin(DocumentChunk, DocumentChunk.document_id == Document.id)
         .filter(
             Document.user_id == current_user.id,
-            Document.is_deleted.isnot(True)  # 삭제되지 않은 문서만 조회
+            Document.is_deleted.isnot(True),
         )
+        .group_by(Document.id)
         .order_by(Document.uploaded_at.desc())
         .all()
     )
@@ -597,9 +750,10 @@ async def get_documents(
             "id":          d.id,
             "filename":    d.filename,
             "file_type":   d.file_type,
+            "chunk_count": chunk_count,
             "uploaded_at": d.uploaded_at.isoformat() if d.uploaded_at else None,
         }
-        for d in docs
+        for d, chunk_count in rows
     ]
 
 
@@ -692,6 +846,18 @@ async def chat(
 
     primary_doc_id = id_list[0]   # FK NOT NULL 제약용 대표 ID
 
+    # ── StudySession 업서트 (문서 접근 기록) ──
+    for doc_id in id_list:
+        sess = db.query(StudySession).filter(
+            StudySession.user_id    == current_user.id,
+            StudySession.document_id == doc_id,
+        ).order_by(StudySession.last_accessed_at.desc()).first()
+        if sess:
+            sess.last_accessed_at = get_kst_now()
+        else:
+            db.add(StudySession(user_id=current_user.id, document_id=doc_id))
+    db.commit()
+
     start = time.time()
     with tracer.start_as_current_span("rag_chat") as span:
         span.set_attribute("user.id",   current_user.id)
@@ -717,6 +883,33 @@ async def chat(
         )
         db.add(rag_q)
         db.commit()
+        db.refresh(rag_q)
+
+        # ── RagRetrievedChunk 저장 ──
+        retrieved_with_scores = result.get("retrieved_with_scores", [])
+        try:
+            _save_retrieved_chunks(db, rag_q.id, retrieved_with_scores)
+            db.commit()
+        except Exception as _e:
+            db.rollback()
+            logger.warning(f"RagRetrievedChunk 저장 실패 (무시): {_e}")
+
+        # ── RagEvaluation 자동 계산·저장 ──
+        try:
+            context_docs = [doc for doc, _ in retrieved_with_scores]
+            eval_scores  = _compute_simple_evaluation(query, context_docs, result["answer"])
+            db.add(RagEvaluation(
+                query_id          = rag_q.id,
+                faithfulness      = eval_scores["faithfulness"],
+                answer_relevancy  = eval_scores["answer_relevancy"],
+                context_precision = eval_scores["context_precision"],
+                context_recall    = eval_scores["context_recall"],
+            ))
+            db.commit()
+        except Exception as _e:
+            db.rollback()
+            logger.warning(f"RagEvaluation 저장 실패 (무시): {_e}")
+
         logger.info(
             f"채팅 완료 | 모델={provider} latency={int(latency_s*1000)}ms",
             extra={"tags": {"user_id": str(current_user.id), "model": provider, "event": "chat"}},
@@ -807,14 +1000,27 @@ async def generate_questions(
 
     try:
         start_time = time.time()
-        raw = rag_engine.generate_questions(
+        raw, gen_retrieved = rag_engine.generate_questions(
             user_id=current_user.id, provider=provider, db=db, document_ids=req.document_ids
         )
         # 지연 시간 기록
         MODEL_LATENCY.labels(provider=provider).observe(time.time() - start_time)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI 모델 응답 오류: {str(e)}")
-    
+
+    # 문제 생성에 사용된 청크를 DB에서 조회 (chunk_id 연결용)
+    gen_chunk_ids: list[int | None] = []
+    for doc in gen_retrieved:
+        doc_id = doc.metadata.get("document_id")
+        if doc_id:
+            db_chunk = db.query(DocumentChunk).filter(
+                DocumentChunk.document_id == doc_id,
+                DocumentChunk.content == doc.page_content,
+            ).first()
+            gen_chunk_ids.append(db_chunk.id if db_chunk else None)
+        else:
+            gen_chunk_ids.append(None)
+
     # 정규표현식으로 JSON 배열 부분([ ... ])만 추출
     raw = raw.strip()
     match = re.search(r"(\[.*\])", raw, re.DOTALL)
@@ -839,27 +1045,44 @@ async def generate_questions(
         raise HTTPException(status_code=500, detail="문제 생성 실패: 결과가 리스트 형식이 아닙니다.")
 
     saved = []
-    for q in questions_data:
+    for qi, q in enumerate(questions_data):
         # 데이터 구조 보정 — dict 형태와 list 형태 모두 처리
         if isinstance(q, dict):
             question_text = q.get("question", "")
             choices       = q.get("options") or q.get("choices") or []
             answer        = q.get("answer", "")
+            hint          = q.get("hint", "")
         elif isinstance(q, list) and len(q) >= 3:
             # ["질문", ["A","B","C","D"], "정답"] 형태 대응
             question_text = q[0] if isinstance(q[0], str) else ""
             choices       = q[1] if isinstance(q[1], list) else []
             answer        = q[2] if isinstance(q[2], str) else ""
+            hint          = q[3] if len(q) > 3 and isinstance(q[3], str) else ""
         else:
             continue
 
         if not question_text or not choices: continue
 
+        # 문제를 생성에 기여한 청크와 연결 (순서 기준 순환 할당)
+        chunk_id = gen_chunk_ids[qi % len(gen_chunk_ids)] if gen_chunk_ids else None
+
+        # 출처 청크 내용 조회 (신뢰도 계산용)
+        chunk_content = None
+        if chunk_id:
+            db_chunk_obj = db.query(DocumentChunk).filter(DocumentChunk.id == chunk_id).first()
+            if db_chunk_obj:
+                chunk_content = db_chunk_obj.content
+
+        faithfulness_score = _compute_quiz_faithfulness(question_text, str(answer), chunk_content)
+
         qq = QuizQuestion(
-            document_id    = req.document_ids[0],   # 대표 문서 ID
-            question       = question_text,
-            choices        = choices,
-            correct_answer = str(answer),
+            document_id        = req.document_ids[0],   # 대표 문서 ID
+            chunk_id           = chunk_id,
+            question           = question_text,
+            choices            = choices,
+            correct_answer     = str(answer),
+            hint               = hint or None,
+            faithfulness_score = faithfulness_score,
         )
         db.add(qq)
         db.flush()
@@ -909,11 +1132,13 @@ async def get_questions(
 
     return [
         {
-            "id":          qq.id,
-            "document_id": qq.document_id,
-            "question":    qq.question,
-            "choices":     qq.choices,
-            "status":      "solved" if qq.id in solved_ids else ("wrong" if qq.id in attempted_ids else "new")
+            "id":                qq.id,
+            "document_id":       qq.document_id,
+            "question":          qq.question,
+            "choices":           qq.choices,
+            "hint":              qq.hint,
+            "faithfulness_score": round(qq.faithfulness_score * 100, 1) if qq.faithfulness_score is not None else None,
+            "status":            "solved" if qq.id in solved_ids else ("wrong" if qq.id in attempted_ids else "new")
         }
         for qq in questions
     ]
@@ -964,6 +1189,178 @@ async def submit_attempt(
         "is_correct":     is_correct,
         "correct_answer": qq.correct_answer,
     }
+
+
+# ─── Study Session API ───────────────────────
+
+@app.get("/api/study/sessions")
+async def get_study_sessions(
+    current_user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """사용자의 학습 세션 목록 (문서별 최근 접근 기준)"""
+    rows = (
+        db.query(StudySession, Document)
+        .join(Document, StudySession.document_id == Document.id)
+        .filter(StudySession.user_id == current_user.id)
+        .order_by(StudySession.last_accessed_at.desc())
+        .all()
+    )
+    return [
+        {
+            "document_id":      s.document_id,
+            "filename":         doc.filename,
+            "file_type":        doc.file_type,
+            "started_at":       s.started_at.isoformat() if s.started_at else None,
+            "last_accessed_at": s.last_accessed_at.isoformat() if s.last_accessed_at else None,
+        }
+        for s, doc in rows
+    ]
+
+
+@app.get("/api/documents/{doc_id}/chunks")
+async def get_document_chunks(
+    doc_id: int,
+    current_user: User = Depends(require_user),
+    db: Session = Depends(get_db),
+):
+    """문서의 청크 목록 조회"""
+    doc = db.query(Document).filter(
+        Document.id == doc_id,
+        Document.user_id == current_user.id,
+    ).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없거나 권한이 없습니다.")
+
+    chunks = (
+        db.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == doc_id)
+        .order_by(DocumentChunk.chunk_index)
+        .all()
+    )
+    return [
+        {
+            "id":          c.id,
+            "chunk_index": c.chunk_index,
+            "content":     c.content[:400] + ("…" if len(c.content) > 400 else ""),
+            "token_count": c.token_count,
+        }
+        for c in chunks
+    ]
+
+
+# ─── RAG Evaluation API ──────────────────────
+
+@app.get("/api/admin/evaluations")
+async def admin_evaluations(
+    page:  int = 1,
+    limit: int = 20,
+    admin: User = Depends(require_admin),
+    db:    Session = Depends(get_db),
+):
+    """RAG 평가 이력 조회 — admin 전용"""
+    total = db.query(RagEvaluation).count()
+    rows  = (
+        db.query(RagEvaluation, RagQuery)
+        .join(RagQuery, RagEvaluation.query_id == RagQuery.id)
+        .order_by(RagEvaluation.evaluated_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+    return {
+        "total": total,
+        "page":  page,
+        "items": [
+            {
+                "id":                ev.id,
+                "query":             rq.query[:80] + ("…" if len(rq.query) > 80 else ""),
+                "model":             rq.model_used,
+                "faithfulness":      round((ev.faithfulness or 0) * 100, 1),
+                "answer_relevancy":  round((ev.answer_relevancy or 0) * 100, 1),
+                "context_precision": round((ev.context_precision or 0) * 100, 1),
+                "context_recall":    round((ev.context_recall or 0) * 100, 1) if ev.context_recall is not None else None,
+                "evaluated_at":      ev.evaluated_at.strftime("%Y-%m-%d %H:%M") if ev.evaluated_at else "-",
+            }
+            for ev, rq in rows
+        ],
+    }
+
+
+# ─── Ground Truth API (Admin) ─────────────────
+
+class GroundTruthRequest(BaseModel):
+    document_id:  int
+    question:     str
+    ideal_answer: str
+
+
+@app.get("/api/admin/ground-truths")
+async def list_ground_truths(
+    document_id: Optional[int] = None,
+    page:  int = 1,
+    limit: int = 20,
+    admin: User = Depends(require_admin),
+    db:    Session = Depends(get_db),
+):
+    """정답 데이터셋 목록 — admin 전용"""
+    q = db.query(RagGroundTruth, Document).join(Document, RagGroundTruth.document_id == Document.id)
+    if document_id:
+        q = q.filter(RagGroundTruth.document_id == document_id)
+    total = q.count()
+    rows  = q.order_by(RagGroundTruth.created_at.desc()).offset((page - 1) * limit).limit(limit).all()
+    return {
+        "total": total,
+        "page":  page,
+        "items": [
+            {
+                "id":           gt.id,
+                "document_id":  gt.document_id,
+                "filename":     doc.filename,
+                "question":     gt.question,
+                "ideal_answer": gt.ideal_answer,
+                "created_at":   gt.created_at.strftime("%Y-%m-%d %H:%M") if gt.created_at else "-",
+            }
+            for gt, doc in rows
+        ],
+    }
+
+
+@app.post("/api/admin/ground-truths")
+async def create_ground_truth(
+    req:   GroundTruthRequest,
+    admin: User = Depends(require_admin),
+    db:    Session = Depends(get_db),
+):
+    """정답 데이터 추가 — admin 전용"""
+    doc = db.query(Document).filter(Document.id == req.document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="문서를 찾을 수 없습니다.")
+    gt = RagGroundTruth(
+        document_id  = req.document_id,
+        created_by   = admin.id,
+        question     = req.question,
+        ideal_answer = req.ideal_answer,
+    )
+    db.add(gt)
+    db.commit()
+    db.refresh(gt)
+    return {"id": gt.id, "message": "정답 데이터가 추가되었습니다."}
+
+
+@app.delete("/api/admin/ground-truths/{gt_id}")
+async def delete_ground_truth(
+    gt_id: int,
+    admin: User = Depends(require_admin),
+    db:    Session = Depends(get_db),
+):
+    """정답 데이터 삭제 — admin 전용"""
+    gt = db.query(RagGroundTruth).filter(RagGroundTruth.id == gt_id).first()
+    if not gt:
+        raise HTTPException(status_code=404, detail="정답 데이터를 찾을 수 없습니다.")
+    db.delete(gt)
+    db.commit()
+    return {"message": "삭제되었습니다."}
 
 
 # ─── Admin API (관리자 전용) ──────────────────

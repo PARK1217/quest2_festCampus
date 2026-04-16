@@ -180,7 +180,9 @@ class QuizQuestion(Base):
     question       = Column(Text, nullable=False)
     choices        = Column(JSON)                    # 객관식 선택지
     correct_answer = Column(String, nullable=False)
-    created_at     = Column(DateTime, default=get_kst_now)
+    hint               = Column(Text,  nullable=True)  # 힌트 (정답을 직접 알려주지 않는 선에서)
+    faithfulness_score = Column(Float, nullable=True)  # 문제+정답 키워드가 출처 청크에 얼마나 포함됐는지 (0.0~1.0)
+    created_at         = Column(DateTime, default=get_kst_now)
 
     document = relationship("Document",      back_populates="quiz_questions")
     chunk    = relationship("DocumentChunk", back_populates="quiz_questions")

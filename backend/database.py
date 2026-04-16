@@ -47,6 +47,7 @@ def init_db():
 
 def _migrate():
     migrations = [
+        # ── 기존 컬럼 추가 ──
         "ALTER TABLE rag_queries ADD COLUMN IF NOT EXISTS input_tokens  INTEGER",
         "ALTER TABLE rag_queries ADD COLUMN IF NOT EXISTS output_tokens INTEGER",
         "ALTER TABLE rag_queries ADD COLUMN IF NOT EXISTS status        VARCHAR DEFAULT 'success'",
@@ -55,6 +56,66 @@ def _migrate():
         "ALTER TABLE documents   ADD COLUMN IF NOT EXISTS is_deleted    BOOLEAN DEFAULT FALSE NOT NULL",
         "ALTER TABLE users       ADD COLUMN IF NOT EXISTS is_deleted    BOOLEAN DEFAULT FALSE NOT NULL",
         "ALTER TABLE users       ADD COLUMN IF NOT EXISTS deleted_at    TIMESTAMP",
+        "ALTER TABLE users       ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP",
+        # ── quiz_questions chunk_id / hint / faithfulness_score ──
+        "ALTER TABLE quiz_questions ADD COLUMN IF NOT EXISTS chunk_id           INTEGER REFERENCES document_chunks(id)",
+        "ALTER TABLE quiz_questions ADD COLUMN IF NOT EXISTS created_at         TIMESTAMP",
+        "ALTER TABLE quiz_questions ADD COLUMN IF NOT EXISTS hint               TEXT",
+        "ALTER TABLE quiz_questions ADD COLUMN IF NOT EXISTS faithfulness_score FLOAT",
+        # ── rag_retrieved_chunks ──
+        """CREATE TABLE IF NOT EXISTS rag_retrieved_chunks (
+            id               SERIAL PRIMARY KEY,
+            query_id         INTEGER NOT NULL REFERENCES rag_queries(id) ON DELETE CASCADE,
+            chunk_id         INTEGER NOT NULL REFERENCES document_chunks(id) ON DELETE CASCADE,
+            similarity_score FLOAT,
+            rank             INTEGER
+        )""",
+        # ── rag_evaluations ──
+        """CREATE TABLE IF NOT EXISTS rag_evaluations (
+            id                 SERIAL PRIMARY KEY,
+            query_id           INTEGER NOT NULL UNIQUE REFERENCES rag_queries(id) ON DELETE CASCADE,
+            faithfulness       FLOAT,
+            answer_relevancy   FLOAT,
+            context_precision  FLOAT,
+            context_recall     FLOAT,
+            evaluated_at       TIMESTAMP
+        )""",
+        # ── rag_ground_truths ──
+        """CREATE TABLE IF NOT EXISTS rag_ground_truths (
+            id           SERIAL PRIMARY KEY,
+            document_id  INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            created_by   INTEGER NOT NULL REFERENCES users(id),
+            question     TEXT NOT NULL,
+            ideal_answer TEXT NOT NULL,
+            created_at   TIMESTAMP
+        )""",
+        # ── study_sessions ──
+        """CREATE TABLE IF NOT EXISTS study_sessions (
+            id               SERIAL PRIMARY KEY,
+            user_id          INTEGER NOT NULL REFERENCES users(id),
+            document_id      INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            started_at       TIMESTAMP,
+            last_accessed_at TIMESTAMP
+        )""",
+        # ── agent_sessions / agent_steps ──
+        """CREATE TABLE IF NOT EXISTS agent_sessions (
+            id          SERIAL PRIMARY KEY,
+            user_id     INTEGER NOT NULL REFERENCES users(id),
+            goal        TEXT,
+            status      VARCHAR DEFAULT 'running',
+            started_at  TIMESTAMP,
+            finished_at TIMESTAMP
+        )""",
+        """CREATE TABLE IF NOT EXISTS agent_steps (
+            id         SERIAL PRIMARY KEY,
+            session_id INTEGER NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+            step_index INTEGER NOT NULL,
+            step_type  VARCHAR,
+            tool_name  VARCHAR,
+            input      JSONB,
+            output     JSONB,
+            created_at TIMESTAMP
+        )""",
     ]
     with engine.begin() as conn:
         for sql in migrations:
