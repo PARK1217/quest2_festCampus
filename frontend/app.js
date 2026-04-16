@@ -1020,9 +1020,15 @@ const Questions = {
       } catch (e) { console.error(e); }
     };
 
+    // 저장 로직 추가
     watch(selectedDocIds, async (newIds) => {
+      sessionStorage.setItem('quiz_doc_ids', JSON.stringify(newIds));
       resetToList();
       await fetchQuestions(newIds);
+    }, { deep: true });
+
+    watch(selectedProvider, (val) => {
+      sessionStorage.setItem('quiz_provider', val);
     });
 
     const generateQuestions = async () => {
@@ -1135,17 +1141,34 @@ const Questions = {
         ]);
         documents.value = docRes.data;
         availableModels.value = modelRes.data;
+
+        // 모델 복원
         if (route.query.provider) {
           selectedProvider.value = route.query.provider;
-        } else if (availableModels.value.length > 0) {
-          selectedProvider.value = availableModels.value[0].id;
+        } else {
+          const savedProvider = sessionStorage.getItem('quiz_provider');
+          if (savedProvider && availableModels.value.some(m => m.id === savedProvider)) {
+            selectedProvider.value = savedProvider;
+          } else if (availableModels.value.length > 0) {
+            selectedProvider.value = availableModels.value[0].id;
+          }
         }
       } catch (e) { console.error(e); }
 
+      // 문서 복원
       if (route.query.document_ids) {
         selectedDocIds.value = route.query.document_ids.split(',').map(Number);
       } else if (route.query.document_id) {
         selectedDocIds.value = [parseInt(route.query.document_id)];
+      } else {
+        const savedIds = sessionStorage.getItem('quiz_doc_ids');
+        if (savedIds) {
+          try {
+            const parsed = JSON.parse(savedIds);
+            const validIds = parsed.filter(id => documents.value.some(d => d.id === id));
+            if (validIds.length > 0) selectedDocIds.value = validIds;
+          } catch (_) {}
+        }
       }
     });
 
@@ -1196,28 +1219,40 @@ const AdminDashboard = {
 
       <!-- 모델별 성능 통계 -->
       <div class="bg-white rounded-xl shadow p-6 mb-8">
-        <h2 class="text-lg font-bold mb-4">모델별 성능 분석</h2>
-        <div class="overflow-x-auto">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-lg font-bold">모델별 성능 분석</h2>
+          <span class="text-xs text-gray-400">호출 횟수 많은 순</span>
+        </div>
+        <div v-if="!ov.model_stats.length" class="text-gray-400 text-sm">데이터 없음</div>
+        <div class="overflow-x-auto" v-else>
           <table class="w-full text-sm">
             <thead>
               <tr class="text-left text-gray-400 border-b">
+                <th class="pb-2 font-medium w-8">#</th>
                 <th class="pb-2 font-medium">모델명</th>
                 <th class="pb-2 font-medium text-center">호출 횟수</th>
-                <th class="pb-2 font-medium text-center">평균 지연시간(ms)</th>
-                <th class="pb-2 font-medium">성능 상태</th>
+                <th class="pb-2 font-medium text-center">평균 지연</th>
+                <th class="pb-2 font-medium text-center">최소 / 최대</th>
+                <th class="pb-2 font-medium text-center">상태</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="ms in ov.model_stats" :key="ms.model" class="border-b last:border-0">
+              <tr v-for="(ms, idx) in ov.model_stats" :key="ms.model" class="border-b last:border-0 hover:bg-gray-50">
+                <td class="py-3 text-gray-300 font-bold text-xs">{{ idx + 1 }}</td>
                 <td class="py-3">
                   <span :class="modelBadge(ms.model)">{{ ms.model || '-' }}</span>
                 </td>
-                <td class="py-3 text-center text-blue-600 font-semibold">{{ ms.count }}회</td>
-                <td class="py-3 text-center text-gray-600">{{ ms.avg_latency }}ms</td>
-                <td class="py-3">
-                  <span :class="ms.avg_latency < 2000 ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'"
-                        class="text-[10px] px-2 py-0.5 rounded-full font-bold">
-                    {{ ms.avg_latency < 2000 ? '쾌적' : '지연' }}
+                <td class="py-3 text-center font-semibold text-blue-600">{{ ms.count.toLocaleString() }}회</td>
+                <td class="py-3 text-center" :class="ms.avg_latency < 2000 ? 'text-green-600 font-semibold' : ms.avg_latency < 5000 ? 'text-yellow-600 font-semibold' : 'text-red-500 font-semibold'">
+                  {{ ms.avg_latency.toLocaleString() }}ms
+                </td>
+                <td class="py-3 text-center text-xs text-gray-400">
+                  {{ ms.min_latency.toLocaleString() }} / {{ ms.max_latency.toLocaleString() }}ms
+                </td>
+                <td class="py-3 text-center">
+                  <span class="text-[10px] px-2 py-0.5 rounded-full font-bold"
+                    :class="ms.avg_latency < 2000 ? 'bg-green-100 text-green-700' : ms.avg_latency < 5000 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600'">
+                    {{ ms.avg_latency < 2000 ? '쾌적' : ms.avg_latency < 5000 ? '보통' : '지연' }}
                   </span>
                 </td>
               </tr>
@@ -1249,18 +1284,30 @@ const AdminDashboard = {
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        <!-- 문서별 쿼리 수 -->
+        <!-- 문서별 쿼리 수 (TOP 5 요약) -->
         <div class="bg-white rounded-xl shadow p-6">
-          <h2 class="text-lg font-bold mb-4">문서별 쿼리 현황</h2>
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-bold">문서별 쿼리 현황</h2>
+            <router-link to="/admin/doc-stats" class="text-xs text-blue-600 hover:text-blue-800 font-medium hover:underline">전체 보기 →</router-link>
+          </div>
           <div v-if="!ov.doc_stats.length" class="text-gray-400 text-sm">데이터 없음</div>
-          <div v-for="d in ov.doc_stats" :key="d.filename" class="mb-3">
-            <div class="flex justify-between text-sm mb-1">
-              <span class="truncate max-w-xs text-gray-700">{{ d.filename }}</span>
-              <span class="font-semibold text-blue-600">{{ d.query_count }}건</span>
+          <div v-else>
+            <div v-for="d in ov.doc_stats.slice(0, 5)" :key="d.doc_id" class="mb-3">
+              <div class="flex justify-between text-sm mb-0.5">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="truncate text-gray-700" :title="d.filename">{{ d.filename }}</span>
+                </div>
+                <span class="flex-shrink-0 font-semibold text-blue-600 ml-2">{{ d.query_count }}건</span>
+              </div>
+              <div class="text-[11px] text-gray-400 mb-1">{{ d.user_name }}</div>
+              <div class="w-full bg-gray-100 rounded-full h-1.5">
+                <div class="bg-blue-500 h-1.5 rounded-full" :style="{width: barWidth(d.query_count, maxDocQ) + '%'}"></div>
+              </div>
             </div>
-            <div class="w-full bg-gray-100 rounded-full h-2">
-              <div class="bg-blue-500 h-2 rounded-full" :style="{width: barWidth(d.query_count, maxDocQ) + '%'}"></div>
-            </div>
+            <router-link to="/admin/doc-stats"
+              class="mt-3 block w-full text-center text-xs text-blue-600 hover:text-blue-800 font-medium py-1.5 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors">
+              전체 {{ ov.doc_stats.length }}건 상세 보기 →
+            </router-link>
           </div>
         </div>
 
@@ -1380,7 +1427,7 @@ const AdminDashboard = {
       { key: 'context_recall',    label: '컨텍스트 재현율', color: '#8b5cf6' },
     ];
 
-    const noEval  = Vue.computed(() => Object.values(ov.value.rag_evaluation).every(v => v === 0));
+    const noEval   = Vue.computed(() => Object.values(ov.value.rag_evaluation).every(v => v === 0));
     const maxDocQ  = Vue.computed(() => Math.max(1, ...ov.value.doc_stats.map(d => d.query_count)));
     const maxUserQ = Vue.computed(() => Math.max(1, ...ov.value.user_stats.map(u => u.query_count)));
     const barWidth = (val, max) => Math.round((val / max) * 100);
@@ -1437,13 +1484,19 @@ const AdminDashboard = {
           axios.get(`${API_URL}/api/admin/overview`),
           fetchUsers(),
         ]);
-        ov.value = ovRes.data;
+        const data = ovRes.data;
+        ov.value.summary        = data.summary        || ov.value.summary;
+        ov.value.model_stats    = data.model_stats    || [];
+        ov.value.rag_evaluation = data.rag_evaluation || ov.value.rag_evaluation;
+        ov.value.recent_queries = data.recent_queries || [];
+        ov.value.doc_stats      = data.doc_stats      || [];
+        ov.value.user_stats     = data.user_stats     || [];
       } catch (e) { console.error(e); }
     });
 
-    return { 
+    return {
       ov, metrics, noEval, maxDocQ, maxUserQ, barWidth, modelBadge,
-      users, roleSelections, changingId, roleMsg, roleMsgOk, changeRole 
+      users, roleSelections, changingId, roleMsg, roleMsgOk, changeRole,
     };
   }
 };
@@ -2124,6 +2177,11 @@ const App = {
                 active-class="bg-yellow-500 hover:bg-yellow-500 text-gray-900">
                 <span>RAG 평가 이력</span>
               </router-link>
+              <router-link to="/admin/doc-stats"
+                class="p-3 rounded-lg hover:bg-gray-800 transition-colors flex items-center gap-3"
+                active-class="bg-yellow-500 hover:bg-yellow-500 text-gray-900">
+                <span>문서별 쿼리 현황</span>
+              </router-link>
             </div>
           </template>
           <!-- 회원 탈퇴 (숨김 메뉴) -->
@@ -2340,7 +2398,14 @@ const AdminEvaluations = {
           <h1 class="text-3xl font-bold">RAG 평가 이력</h1>
           <p class="text-sm text-gray-400 mt-1">채팅 응답별 자동 품질 평가 결과 (휴리스틱 기반)</p>
         </div>
-        <router-link to="/admin" class="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">← 관리자 대시보드</router-link>
+        <div class="flex items-center gap-3">
+          <button @click="recalculate" :disabled="recalculating"
+            class="text-sm bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+            {{ recalculating ? '재계산 중...' : '기존 데이터 재계산' }}
+          </button>
+          <span v-if="recalcResult" class="text-xs text-gray-500">{{ recalcResult }}</span>
+          <router-link to="/admin" class="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">← 관리자 대시보드</router-link>
+        </div>
       </div>
 
       <!-- 평균 요약 카드 -->
@@ -2431,8 +2496,205 @@ const AdminEvaluations = {
       finally { loading.value = false; }
     };
 
+    const recalculating = ref(false);
+    const recalcResult  = ref('');
+
+    const recalculate = async () => {
+      recalculating.value = true;
+      recalcResult.value  = '';
+      try {
+        const res = await axios.post(`${API_URL}/api/admin/evaluations/recalculate`);
+        const { updated, skipped } = res.data;
+        recalcResult.value = `완료: ${updated}건 재계산, ${skipped}건 스킵`;
+        await load();
+      } catch (e) {
+        recalcResult.value = '재계산 실패';
+        console.error(e);
+      } finally {
+        recalculating.value = false;
+      }
+    };
+
     onMounted(load);
-    return { items, total, page, limit, loading, metricSummary, scoreColor, load };
+    return { items, total, page, limit, loading, metricSummary, scoreColor, load, recalculating, recalcResult, recalculate };
+  }
+};
+
+// ─── AdminDocStats ────────────────────────────
+const AdminDocStats = {
+  template: `
+    <div class="p-8 max-w-6xl mx-auto">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-3xl font-bold">문서별 쿼리 현황</h1>
+          <p class="text-sm text-gray-400 mt-1">문서명 · 소유자 · 삭제 여부로 필터링</p>
+        </div>
+        <router-link to="/admin" class="text-sm text-gray-500 hover:text-gray-700 flex items-center gap-1">← 관리자 대시보드</router-link>
+      </div>
+
+      <!-- 필터 영역 -->
+      <div class="bg-white rounded-xl shadow p-5 mb-6 flex flex-wrap gap-4 items-end">
+        <!-- 문서명 검색 -->
+        <div class="flex-1 min-w-48">
+          <label class="block text-xs text-gray-500 font-medium mb-1">문서명 검색</label>
+          <input v-model="filters.search" @keyup.enter="load(1)"
+            placeholder="파일명 입력..."
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+        </div>
+        <!-- 사용자 필터 -->
+        <div class="min-w-48">
+          <label class="block text-xs text-gray-500 font-medium mb-1">사용자</label>
+          <select v-model="filters.user_email" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+            <option value="">전체 사용자</option>
+            <option v-for="u in userList" :key="u.email" :value="u.email">{{ u.name }} ({{ u.email }})</option>
+          </select>
+        </div>
+        <!-- 정렬 -->
+        <div class="min-w-36">
+          <label class="block text-xs text-gray-500 font-medium mb-1">정렬 기준</label>
+          <select v-model="filters.sort_by" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+            <option value="query_count">쿼리 수</option>
+            <option value="filename">문서명</option>
+            <option value="user">소유자</option>
+          </select>
+        </div>
+        <div class="min-w-28">
+          <label class="block text-xs text-gray-500 font-medium mb-1">정렬 방향</label>
+          <select v-model="filters.sort_dir" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+            <option value="desc">내림차순</option>
+            <option value="asc">오름차순</option>
+          </select>
+        </div>
+        <!-- 삭제 문서 포함 -->
+        <label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer pb-2">
+          <input type="checkbox" v-model="filters.show_deleted" class="accent-red-500 w-4 h-4">
+          삭제된 문서 포함
+        </label>
+        <!-- 검색 버튼 -->
+        <button @click="load(1)" class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors">검색</button>
+        <button @click="resetFilters" class="bg-gray-100 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors">초기화</button>
+      </div>
+
+      <!-- 결과 테이블 -->
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div v-if="loading" class="p-10 text-center text-gray-400">불러오는 중...</div>
+        <div v-else-if="loadError" class="p-10 text-center text-red-400">
+          데이터를 불러오지 못했습니다.<br>
+          <span class="text-xs text-gray-400 mt-1 block">{{ loadError }}</span>
+          <button @click="load(1)" class="mt-3 text-sm text-blue-600 hover:underline">다시 시도</button>
+        </div>
+        <div v-else-if="!items.length" class="p-10 text-center text-gray-400">조건에 맞는 문서가 없습니다.</div>
+        <template v-else>
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 border-b">
+              <tr class="text-left text-gray-500">
+                <th class="px-4 py-3 font-medium w-10">#</th>
+                <th class="px-4 py-3 font-medium">문서명</th>
+                <th class="px-4 py-3 font-medium">소유자</th>
+                <th class="px-4 py-3 font-medium text-center">업로드일</th>
+                <th class="px-4 py-3 font-medium text-center">쿼리 수</th>
+                <th class="px-4 py-3 font-medium text-center">상태</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-100">
+              <tr v-for="(d, idx) in items" :key="d.doc_id"
+                class="hover:bg-gray-50"
+                :class="d.is_deleted ? 'opacity-60' : ''">
+                <td class="px-4 py-3 text-gray-300 text-xs font-bold">{{ (page - 1) * limit + idx + 1 }}</td>
+                <td class="px-4 py-3 max-w-xs">
+                  <span :class="d.is_deleted ? 'line-through text-gray-400' : 'text-gray-700'"
+                    :title="d.filename" class="truncate block">{{ d.filename }}</span>
+                </td>
+                <td class="px-4 py-3">
+                  <span class="text-gray-700 font-medium">{{ d.user_name }}</span>
+                  <span class="block text-xs text-gray-400">{{ d.user_email }}</span>
+                </td>
+                <td class="px-4 py-3 text-center text-xs text-gray-400">{{ d.uploaded_at }}</td>
+                <td class="px-4 py-3 text-center">
+                  <span class="font-bold text-blue-600">{{ d.query_count.toLocaleString() }}</span>
+                  <span class="text-xs text-gray-400">건</span>
+                </td>
+                <td class="px-4 py-3 text-center">
+                  <span v-if="d.is_deleted" class="text-[11px] bg-red-100 text-red-500 font-bold px-2 py-0.5 rounded-full">삭제됨</span>
+                  <span v-else class="text-[11px] bg-green-100 text-green-600 font-bold px-2 py-0.5 rounded-full">정상</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- 페이지네이션 -->
+          <div class="px-5 py-4 border-t flex items-center justify-between text-sm text-gray-500">
+            <span>총 <strong class="text-gray-700">{{ total }}</strong>건 중 {{ (page-1)*limit+1 }}–{{ Math.min(page*limit, total) }}건</span>
+            <div class="flex items-center gap-1">
+              <button :disabled="page <= 1" @click="load(1)"
+                class="px-2 py-1 rounded border text-xs hover:bg-gray-50 disabled:opacity-30">«</button>
+              <button :disabled="page <= 1" @click="load(page - 1)"
+                class="px-3 py-1 rounded border hover:bg-gray-50 disabled:opacity-30">이전</button>
+              <span class="px-3 py-1 text-xs font-semibold">{{ page }} / {{ totalPages }}</span>
+              <button :disabled="page >= totalPages" @click="load(page + 1)"
+                class="px-3 py-1 rounded border hover:bg-gray-50 disabled:opacity-30">다음</button>
+              <button :disabled="page >= totalPages" @click="load(totalPages)"
+                class="px-2 py-1 rounded border text-xs hover:bg-gray-50 disabled:opacity-30">»</button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  `,
+  setup() {
+    const items     = ref([]);
+    const total     = ref(0);
+    const page      = ref(1);
+    const limit     = 20;
+    const loading   = ref(true);
+    const loadError = ref('');
+    const userList  = ref([]);
+
+    const filters = ref({
+      search:       '',
+      user_email:   '',
+      sort_by:      'query_count',
+      sort_dir:     'desc',
+      show_deleted: false,
+    });
+
+    const totalPages = Vue.computed(() => Math.max(1, Math.ceil(total.value / limit)));
+
+    const load = async (p = 1) => {
+      loading.value   = true;
+      loadError.value = '';
+      page.value = p;
+      try {
+        const res = await axios.get(`${API_URL}/api/admin/doc-stats`, {
+          params: {
+            page:         p,
+            limit,
+            search:       filters.value.search,
+            user_email:   filters.value.user_email,
+            sort_by:      filters.value.sort_by,
+            sort_dir:     filters.value.sort_dir,
+            show_deleted: filters.value.show_deleted,
+          }
+        });
+        items.value    = Array.isArray(res.data.items) ? res.data.items : [];
+        total.value    = res.data.total || 0;
+        if (Array.isArray(res.data.user_list)) userList.value = res.data.user_list;
+      } catch (e) {
+        console.error(e);
+        loadError.value = e.response?.data?.detail || e.message || '알 수 없는 오류';
+      } finally {
+        loading.value = false;
+      }
+    };
+
+    const resetFilters = () => {
+      filters.value = { search: '', user_email: '', sort_by: 'query_count', sort_dir: 'desc', show_deleted: false };
+      load(1);
+    };
+
+    onMounted(() => load(1));
+
+    return { items, total, page, limit, loading, loadError, filters, userList, totalPages, load, resetFilters };
   }
 };
 
@@ -2448,6 +2710,7 @@ const routes = [
   { path: '/admin/users',         component: AdminUsers },
   { path: '/admin/ground-truths', component: AdminGroundTruths },
   { path: '/admin/evaluations',   component: AdminEvaluations },
+  { path: '/admin/doc-stats',     component: AdminDocStats },
 ];
 
 const router = createRouter({ history: createWebHashHistory(), routes });
