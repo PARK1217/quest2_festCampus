@@ -47,3 +47,6 @@ services:
       - prometheus
       - loki
       - tempo
+
+
+# docker compose -f docker-compose.monitoring.yml up -d
