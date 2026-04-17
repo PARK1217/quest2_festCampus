@@ -53,6 +53,7 @@ def _migrate():
         "ALTER TABLE rag_queries ADD COLUMN IF NOT EXISTS status        VARCHAR DEFAULT 'success'",
         "ALTER TABLE rag_queries ADD COLUMN IF NOT EXISTS sources       JSONB",
         "ALTER TABLE rag_queries ADD COLUMN IF NOT EXISTS document_ids  JSONB",
+        "ALTER TABLE rag_queries ADD COLUMN IF NOT EXISTS cost          FLOAT DEFAULT 0.0",
         "ALTER TABLE documents   ADD COLUMN IF NOT EXISTS is_deleted    BOOLEAN DEFAULT FALSE NOT NULL",
         "ALTER TABLE users       ADD COLUMN IF NOT EXISTS is_deleted    BOOLEAN DEFAULT FALSE NOT NULL",
         "ALTER TABLE users       ADD COLUMN IF NOT EXISTS deleted_at    TIMESTAMP",

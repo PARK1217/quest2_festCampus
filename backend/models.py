@@ -112,6 +112,7 @@ class RagQuery(Base):
     latency_ms    = Column(Integer)
     input_tokens  = Column(Integer)                  # 입력 토큰 수
     output_tokens = Column(Integer)                  # 출력 토큰 수
+    cost          = Column(Float, default=0.0)       # 소모 비용 (USD)
     status        = Column(String, default="success")  # success | rate_limit | not_found | bad_request | error
     queried_at    = Column(DateTime, default=get_kst_now)
 

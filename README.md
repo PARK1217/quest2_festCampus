@@ -259,7 +259,7 @@ QuizQuestion 저장
 | `openai` | GPT-4o-mini | 유료 | 고품질·안정적, 최다 토큰 |
 | `groq` | Llama 3.1 8B Instant | 무료 | ⚡ 초고속 (Groq 전용 추론 칩) |
 | `groq-70b` | Llama 3.3 70B Versatile | 무료 | 고품질 대형 오픈소스 |
-| `groq-mixtral` | Moonshotai Kimi K2 | 무료 | 긴 컨텍스트 처리 특화 |
+| `groq-mixtral` | Mixtral 8x7B (32k context) | 무료 | MoE 구조, 긴 컨텍스트 처리 특화 |
 | `groq-gemma` | Llama 3.1 8B Instant | 무료 | Groq 추가 슬롯 |
 | `huggingface` | Llama 3.1 8B (Groq 경유) | 무료 | HF 키 소유자용 |
 | `mistral` | Mistral Small Latest | 무료 티어 | 유럽산 경량 고성능 |

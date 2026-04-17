@@ -1194,7 +1194,7 @@ const AdminDashboard = {
       <h1 class="text-3xl font-bold mb-8">관리자 대시보드</h1>
 
       <!-- 요약 카드 -->
-      <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+      <div class="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
         <div class="bg-white rounded-xl shadow p-5 border-t-4 border-blue-500 text-center">
           <p class="text-xs text-gray-400 mb-1">전체 사용자</p>
           <p class="text-3xl font-black text-blue-600">{{ ov.summary.total_users }}</p>
@@ -1214,6 +1214,10 @@ const AdminDashboard = {
         <div class="bg-white rounded-xl shadow p-5 border-t-4 border-red-400 text-center">
           <p class="text-xs text-gray-400 mb-1">퀴즈 정답률</p>
           <p class="text-3xl font-black text-red-500">{{ ov.summary.quiz_accuracy }}%</p>
+        </div>
+        <div class="bg-white rounded-xl shadow p-5 border-t-4 border-indigo-500 text-center">
+          <p class="text-xs text-gray-400 mb-1">오늘 소모 비용</p>
+          <p class="text-2xl font-black text-indigo-600">\${{ totalCost.toFixed(4) }}</p>
         </div>
       </div>
 
@@ -1478,10 +1482,13 @@ const AdminDashboard = {
       }
     };
 
+    const totalCost = Vue.ref(0);
+
     onMounted(async () => {
       try {
-        const [ovRes] = await Promise.all([
+        const [ovRes, usageRes] = await Promise.all([
           axios.get(`${API_URL}/api/admin/overview`),
+          axios.get(`${API_URL}/api/admin/usage-stats`),
           fetchUsers(),
         ]);
         const data = ovRes.data;
@@ -1491,12 +1498,16 @@ const AdminDashboard = {
         ov.value.recent_queries = data.recent_queries || [];
         ov.value.doc_stats      = data.doc_stats      || [];
         ov.value.user_stats     = data.user_stats     || [];
+
+        const usageList = Array.isArray(usageRes.data) ? usageRes.data : [];
+        totalCost.value = usageList.reduce((sum, r) => sum + (r.cost || 0), 0);
       } catch (e) { console.error(e); }
     });
 
     return {
       ov, metrics, noEval, maxDocQ, maxUserQ, barWidth, modelBadge,
       users, roleSelections, changingId, roleMsg, roleMsgOk, changeRole,
+      totalCost,
     };
   }
 };
@@ -1580,6 +1591,7 @@ const QueryLogs = {
               <th class="px-4 py-3 font-semibold">사용자</th>
               <th class="px-4 py-3 font-semibold">문서</th>
               <th class="px-4 py-3 font-semibold text-right">토큰</th>
+              <th class="px-4 py-3 font-semibold text-right">비용</th>
               <th class="px-4 py-3 font-semibold text-right">응답시간</th>
               <th class="px-4 py-3 font-semibold text-right">시각</th>
             </tr>
@@ -1607,10 +1619,13 @@ const QueryLogs = {
                 <td class="px-4 py-3 text-gray-500 max-w-[140px] truncate text-xs">{{ item.document_name }}</td>
                 <td class="px-4 py-3 text-right">
                   <template v-if="item.total_tokens != null">
-                    <p class="font-semibold text-gray-700 text-xs">{{ item.total_tokens.toLocaleString() }}</p>
-                    <p class="text-[10px] text-gray-400">↑{{ item.input_tokens }} ↓{{ item.output_tokens }}</p>
+                    <p class="font-semibold text-gray-700 text-xs">\{{ item.total_tokens.toLocaleString() }}</p>
+                    <p class="text-[10px] text-gray-400">↑\{{ item.input_tokens }} ↓\{{ item.output_tokens }}</p>
                   </template>
                   <span v-else class="text-gray-300 text-xs">-</span>
+                </td>
+                <td class="px-4 py-3 text-right">
+                  <span class="font-bold text-blue-600 text-xs">$\{{ (item.cost || 0).toFixed(4) }}</span>
                 </td>
                 <td class="px-4 py-3 text-right">
                   <span :class="item.latency_ms > 5000 ? 'text-red-500' : item.latency_ms > 2000 ? 'text-yellow-600' : 'text-green-600'"

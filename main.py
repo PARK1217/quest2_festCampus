@@ -175,7 +175,7 @@ class RAGEngine:
             return ChatGroq(model_name="llama-3.3-70b-versatile", groq_api_key=GROQ_API_KEY, temperature=0.1)
 
         if provider == "groq-mixtral" and GROQ_API_KEY:
-            return ChatGroq(model_name="moonshotai/kimi-k2-instruct", groq_api_key=GROQ_API_KEY, temperature=0.1)
+            return ChatGroq(model_name="mixtral-8x7b-32768", groq_api_key=GROQ_API_KEY, temperature=0.1)
 
         if provider == "groq-gemma" and GROQ_API_KEY:
             return ChatGroq(model_name="llama-3.1-8b-instant", groq_api_key=GROQ_API_KEY, temperature=0.1)
@@ -555,7 +555,46 @@ def _save_retrieved_chunks(db: Session, query_id: int, retrieved_with_scores: li
             ))
 
 
-# ─── Request Models ──────────────────────────
+# ─── 모델 단가 및 한도 설정 (USD) ───────────────────────────
+
+# 1,000 토큰당 가격 (입력 / 출력)
+MODEL_PRICING = {
+    "openai":       {"input": 0.00015, "output": 0.0006},  # gpt-4o-mini 기준
+    "gemini":       {"input": 0.000075, "output": 0.0003}, # gemini-1.5-flash 기준
+    "groq":         {"input": 0.0, "output": 0.0},        # 무료
+    "groq-70b":     {"input": 0.0, "output": 0.0},
+    "groq-mixtral": {"input": 0.0, "output": 0.0},
+    "groq-gemma":   {"input": 0.0, "output": 0.0},
+    "huggingface":  {"input": 0.0, "output": 0.0},
+    "mistral":      {"input": 0.0002, "output": 0.0006},
+    "cerebras":     {"input": 0.0, "output": 0.0},
+    "cohere":       {"input": 0.00015, "output": 0.0006},
+    "ollama":       {"input": 0.0, "output": 0.0},
+}
+
+# 모델별 일일 무료 호출 한도 (유료 모델은 99999로 설정)
+MODEL_FREE_QUOTA = {
+    "openai":       99999,
+    "gemini":       1500, # Gemini 1.5 Flash 무료 티어 기준 (RPM 15, RPD 1500)
+    "groq":         14400,
+    "groq-70b":     14400,
+    "groq-mixtral": 14400,
+    "groq-gemma":   14400,
+    "huggingface":  1000,
+    "mistral":      99999,
+    "cerebras":     14400,
+    "cohere":       1000,
+    "ollama":       99999,
+}
+
+def _calculate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """토큰 수를 기반으로 예상 비용(USD) 계산"""
+    # model이 provider 이름일 수도 있고 gpt-4o-mini 같은 모델명일 수도 있음
+    provider = model.split("-")[0] if "-" in model else model
+    pricing = MODEL_PRICING.get(provider, {"input": 0.0, "output": 0.0})
+    
+    cost = (input_tokens / 1000 * pricing["input"]) + (output_tokens / 1000 * pricing["output"])
+    return round(cost, 6)
 class GenerateQuestionsRequest(BaseModel):
     document_ids: List[int]
 
@@ -625,7 +664,7 @@ async def get_available_models():
     if GROQ_API_KEY:
         models.append({"id": "groq",         "name": "Groq · Llama 3.1 8B  ⚡ 초고속",  "badge": "무료"})
         models.append({"id": "groq-70b",     "name": "Groq · Llama 3.3 70B  🧠 고품질", "badge": "무료"})
-        models.append({"id": "groq-mixtral", "name": "Groq · Kimi K2  📄 긴문서",        "badge": "무료"})
+        models.append({"id": "groq-mixtral", "name": "Groq · Mixtral 8x7B  📄 긴문서",    "badge": "무료"})
         models.append({"id": "groq-gemma",   "name": "Groq · Llama 3.1 8B Instant ⚡", "badge": "무료"})
     if HUGGINGFACE_API_KEY:
         models.append({"id": "huggingface",  "name": "HuggingFace (무료)",               "badge": "무료"})
@@ -935,8 +974,9 @@ async def chat(
             sources      = result.get("sources"),
             model_used   = provider,
             latency_ms   = int(latency_s * 1000),
-            input_tokens = result.get("input_tokens"),
-            output_tokens= result.get("output_tokens"),
+            input_tokens = result.get("input_tokens") or 0,
+            output_tokens= result.get("output_tokens") or 0,
+            cost         = _calculate_cost(provider, result.get("input_tokens") or 0, result.get("output_tokens") or 0),
             status       = "success",
         )
         db.add(rag_q)
@@ -1557,6 +1597,7 @@ async def admin_queries(
                 "input_tokens":  r.input_tokens,
                 "output_tokens": r.output_tokens,
                 "total_tokens":  (r.input_tokens or 0) + (r.output_tokens or 0) if (r.input_tokens or r.output_tokens) else None,
+                "cost":          r.cost or 0.0,
                 "queried_at":    r.queried_at.strftime("%Y-%m-%d %H:%M:%S") if r.queried_at else "-",
                 "user_name":     r.user.name,
                 "user_email":    r.user.email,
@@ -1957,6 +1998,46 @@ async def admin_doc_stats(
         ],
         "user_list": [{"name": u.name, "email": u.email} for u in user_list],
     }
+
+
+@app.get("/api/admin/usage-stats")
+async def get_usage_stats(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """모델별 일일 사용량 및 무료 한도 조회 — admin 전용"""
+    today = get_kst_now().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # 오늘 사용량 집계
+    usage_rows = (
+        db.query(RagQuery.model_used, func.count(RagQuery.id).label("cnt"), func.sum(RagQuery.cost).label("total_cost"))
+        .filter(RagQuery.queried_at >= today)
+        .group_by(RagQuery.model_used)
+        .all()
+    )
+    
+    usage_dict = {r.model_used: {"count": r.cnt, "cost": r.total_cost or 0.0} for r in usage_rows}
+    
+    result = []
+    # 모든 지원 모델에 대해 루프
+    for provider, limit in MODEL_FREE_QUOTA.items():
+        # provider 이름이 포함된 실제 모델 사용량 합산 (예: groq, groq-70b 등)
+        count = 0
+        cost = 0.0
+        for m_id, stats in usage_dict.items():
+            if m_id and (m_id == provider or m_id.startswith(f"{provider}-")):
+                count += stats["count"]
+                cost += stats["cost"]
+        
+        result.append({
+            "provider": provider,
+            "used":     count,
+            "limit":    limit,
+            "cost":     round(cost, 4),
+            "is_free":  MODEL_PRICING.get(provider, {}).get("input") == 0.0
+        })
+        
+    return result
 
 
 @app.put("/api/admin/users/{user_id}/role")
