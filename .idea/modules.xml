@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/quest2_festCampus.iml" filepath="$PROJECT_DIR$/.idea/quest2_festCampus.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/rag-study-platform.iml" filepath="$PROJECT_DIR$/.idea/rag-study-platform.iml" />
     </modules>
   </component>
 </project>
